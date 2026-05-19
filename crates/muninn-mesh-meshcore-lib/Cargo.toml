@@ -1,0 +1,14 @@
+[package]
+name = "muninn-mesh-meshcore-lib"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+aes.workspace = true
+ed25519-dalek.workspace = true
+heapless.workspace = true
+hmac.workspace = true
+sha2.workspace = true

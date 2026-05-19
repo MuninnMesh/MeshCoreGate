@@ -1,0 +1,57 @@
+{
+  "name": "MC Telemetry Gate V4",
+  "http": {
+    "port": 80,
+    "tls": false,
+    "wifi_ssid": "example-ssid",
+    "wifi_password": "example-password",
+    "tokens": [
+      "replace-with-random-bearer-token"
+    ]
+  },
+  "display": {
+    "enabled": true,
+    "node_display": "temperature",
+    "brightness_percent": 60
+  },
+  "polling": {
+    "default_interval_secs": 600,
+    "jitter_secs": 10
+  },
+  "radio": {
+    "frequency_hz": 910525000,
+    "bandwidth_hz": 62500,
+    "spreading_factor": 7,
+    "coding_rate": 5,
+    "tx_power_level": 14,
+    "sync_word": 5156,
+    "preamble_len": 16,
+    "iq_inverted": false,
+    "tx_ramp_time_us": 200
+  },
+  "meshcore": {
+    "public_key": "gateway-public-key",
+    "private_key": "gateway-private-key",
+    "routing": {
+      "path_mode": 2
+    }
+  },
+  "producers": [
+    {
+      "public_key": "companion-public-key",
+      "kind": "companion",
+      "password": null,
+      "name": "handheld_node",
+      "enabled": true,
+      "route": "direct"
+    },
+    {
+      "public_key": "repeater-public-key",
+      "kind": "repeater",
+      "password": null,
+      "name": "roof_repeater",
+      "enabled": false,
+      "route": "direct"
+    }
+  ]
+}

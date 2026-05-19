@@ -1,0 +1,20 @@
+[package]
+name = "muninn-gate-core"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = []
+serial-json = []
+defmt = ["dep:defmt"]
+log = ["dep:log"]
+serde = ["dep:serde", "heapless/serde"]
+
+[dependencies]
+heapless.workspace = true
+defmt = { workspace = true, optional = true }
+log = { workspace = true, optional = true }
+serde = { workspace = true, features = ["derive"], optional = true }

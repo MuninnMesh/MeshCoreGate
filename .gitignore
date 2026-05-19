@@ -1,0 +1,27 @@
+# Rust
+/target/
+*.pdb
+**/*.rs.bk
+.rustc_info.json
+
+# Python
+/.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Temporary local planning/docs
+/TODO*.md
+/docs/
+/config.json
+/PROGRESS.md
+/*.csv

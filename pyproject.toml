@@ -1,0 +1,8 @@
+[project]
+name = "muninn-gate-tools"
+version = "0.1.0"
+description = "Host-side tools for Muninn Gate firmware."
+requires-python = ">=3.11"
+dependencies = [
+    "cryptography>=46.0.3",
+]

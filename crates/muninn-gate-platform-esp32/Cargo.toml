@@ -1,0 +1,32 @@
+[package]
+name = "muninn-gate-platform-esp32"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+critical-section.workspace = true
+display-interface-i2c.workspace = true
+embedded-graphics.workspace = true
+embedded-hal-bus.workspace = true
+embassy-futures.workspace = true
+embassy-time = { workspace = true, features = ["generic-queue-8"] }
+esp-alloc.workspace = true
+esp-hal = { workspace = true, features = ["esp32s3", "unstable"] }
+esp-hal-embassy = { workspace = true, features = ["esp32s3"] }
+esp-println = { workspace = true, features = ["esp32s3", "jtag-serial"] }
+esp-rom-sys = { workspace = true, features = ["esp32s3"] }
+esp-wifi = { workspace = true, features = ["esp32s3", "wifi", "smoltcp", "log-04"] }
+heapless.workspace = true
+muninn-gate-core = { workspace = true, features = ["serial-json"] }
+muninn-gate-ui.workspace = true
+muninn-mesh-meshcore-lib.workspace = true
+muninn-mesh-radio.workspace = true
+muninn-mesh-sx126x.workspace = true
+nb.workspace = true
+serde = { workspace = true, features = ["alloc", "derive"] }
+serde_json = { workspace = true, features = ["alloc"] }
+smoltcp = { workspace = true, features = ["medium-ethernet", "proto-ipv4", "socket-dhcpv4", "socket-tcp"] }
+ssd1306.workspace = true

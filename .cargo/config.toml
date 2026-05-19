@@ -1,0 +1,28 @@
+[build]
+target = "xtensa-esp32s3-none-elf"
+
+[unstable]
+build-std = ["core", "alloc"]
+
+[env]
+ESP_HAL_EMBASSY_CONFIG_TIMER_QUEUE = "generic"
+# Keep WiFi memory bounded. Muninn Gate serves low-rate local HTTP telemetry,
+# so throughput features that increase RX/TX buffering are not useful here.
+ESP_WIFI_CONFIG_STATIC_RX_BUF_NUM = "4"
+ESP_WIFI_CONFIG_DYNAMIC_RX_BUF_NUM = "4"
+ESP_WIFI_CONFIG_STATIC_TX_BUF_NUM = "0"
+ESP_WIFI_CONFIG_DYNAMIC_TX_BUF_NUM = "2"
+ESP_WIFI_CONFIG_RX_QUEUE_SIZE = "2"
+ESP_WIFI_CONFIG_TX_QUEUE_SIZE = "2"
+ESP_WIFI_CONFIG_RX_BA_WIN = "2"
+ESP_WIFI_CONFIG_AMPDU_RX_ENABLE = "false"
+ESP_WIFI_CONFIG_AMPDU_TX_ENABLE = "false"
+
+[target.xtensa-esp32s3-none-elf]
+runner = "espflash flash --partition-table partitions.csv --monitor"
+linker = "ldproxy"
+rustflags = [
+    "-C", "link-arg=--ldproxy-linker",
+    "-C", "link-arg=xtensa-esp32s3-elf-gcc",
+    "-C", "link-arg=-Tlinkall.x",
+]

@@ -1,0 +1,11 @@
+[package]
+name = "muninn-mesh-sx126x"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+critical-section.workspace = true
+embedded-hal.workspace = true

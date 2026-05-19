@@ -1,0 +1,62 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/muninn-gate-board-heltec-v4",
+    "crates/muninn-gate-core",
+    "crates/muninn-gate-firmware",
+    "crates/muninn-gate-ui",
+    "crates/muninn-gate-platform-esp32",
+    "crates/muninn-mesh-meshcore-lib",
+    "crates/muninn-mesh-radio",
+    "crates/muninn-mesh-sx126x",
+]
+
+[workspace.dependencies]
+aes = { version = "0.9.0", default-features = false }
+critical-section = "1.2.0"
+defmt = "0.3.10"
+display-interface-i2c = "0.5.0"
+ed25519-dalek = { version = "2.2.0", default-features = false, features = ["alloc", "digest", "fast", "hazmat"] }
+embedded-graphics = "0.8.2"
+embedded-hal = "1.0.0"
+embedded-hal-bus = "0.2.0"
+embassy-futures = "0.1.2"
+embassy-sync = "0.6.2"
+embassy-time = { version = "0.4.0", default-features = false }
+esp-alloc = "0.8.0"
+esp-backtrace = "0.18.1"
+esp-bootloader-esp-idf = "0.4.0"
+esp-hal = "=1.0.0-rc.0"
+esp-hal-embassy = "0.9.1"
+esp-println = { version = "0.16.1", default-features = false }
+esp-rom-sys = "0.1.4"
+esp-wifi = "0.15.1"
+heapless = "0.8.0"
+hmac = { version = "0.13.0", default-features = false }
+log = "0.4.28"
+nb = "1.1.0"
+serde = { version = "1.0.228", default-features = false }
+serde_json = { version = "1.0.149", default-features = false }
+sha2 = { version = "0.11.0", default-features = false }
+smoltcp = { version = "0.12.0", default-features = false }
+ssd1306 = "0.10.0"
+
+muninn-gate-board-heltec-v4 = { path = "crates/muninn-gate-board-heltec-v4" }
+muninn-gate-core = { path = "crates/muninn-gate-core" }
+muninn-gate-platform-esp32 = { path = "crates/muninn-gate-platform-esp32" }
+muninn-gate-ui = { path = "crates/muninn-gate-ui" }
+muninn-mesh-meshcore-lib = { path = "crates/muninn-mesh-meshcore-lib" }
+muninn-mesh-radio = { path = "crates/muninn-mesh-radio" }
+muninn-mesh-sx126x = { path = "crates/muninn-mesh-sx126x" }
+
+[profile.dev]
+opt-level = "s"
+
+[profile.dev.package.esp-wifi]
+opt-level = 3
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"

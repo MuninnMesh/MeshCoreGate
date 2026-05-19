@@ -1,0 +1,26 @@
+[package]
+name = "muninn-gate-firmware"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "muninn-gate"
+path = "src/main.rs"
+
+[features]
+default = ["heltec-v4"]
+esp32s3 = ["heltec-v4"]
+heltec-v4 = [
+    "dep:esp-backtrace",
+    "dep:esp-bootloader-esp-idf",
+    "dep:esp-hal",
+    "dep:muninn-gate-board-heltec-v4",
+]
+
+[dependencies]
+muninn-gate-board-heltec-v4 = { workspace = true, optional = true }
+muninn-gate-core.workspace = true
+
+esp-backtrace = { workspace = true, optional = true, features = ["esp32s3", "panic-handler", "println"] }
+esp-bootloader-esp-idf = { workspace = true, optional = true, features = ["esp32s3"] }
+esp-hal = { workspace = true, optional = true, features = ["esp32s3", "unstable"] }

@@ -1,0 +1,19 @@
+[package]
+name = "muninn-mesh-radio"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = ["stm32wl-lora-agc-jam-recovery"]
+stm32wl-lora-agc-jam-recovery = []
+
+[dependencies]
+critical-section.workspace = true
+embassy-sync.workspace = true
+embedded-hal.workspace = true
+log.workspace = true
+muninn-mesh-meshcore-lib.workspace = true
+muninn-mesh-sx126x.workspace = true

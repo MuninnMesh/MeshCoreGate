@@ -1,0 +1,12 @@
+[package]
+name = "muninn-gate-ui"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+embedded-graphics.workspace = true
+heapless.workspace = true
+muninn-gate-core.workspace = true

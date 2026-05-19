@@ -1,0 +1,63 @@
+{
+  "name": "MC Telemetry Gate V4", // Short gateway name shown in logs, metrics, and display.
+
+  "http": { // Optional. Present means HTTP + serial; omit or set null for serial-only.
+    "port": 80, // HTTP server port.
+    "tls": false, // Whether HTTP should use TLS when the platform supports it.
+    "wifi_ssid": "example-ssid", // WiFi SSID used before starting HTTP.
+    "wifi_password": "example-password", // WiFi password.
+    "tokens": [ // Bearer tokens accepted by HTTP endpoints; null or [] disables bearer-header auth.
+      "replace-with-random-bearer-token"
+    ]
+  },
+
+  "display": { // Local display behavior.
+    "enabled": true, // Set false to disable display output.
+    "node_display": "temperature", // temperature, humidity, soc, battery_voltage, pressure, rssi, or latency.
+    "brightness_percent": 60 // OLED brightness from 0 to 100.
+  },
+
+  "polling": { // Polling intervals are seconds.
+    "default_interval_secs": 600, // Default producer poll interval; 600s is 10 minutes.
+    "jitter_secs": 10 // Deterministic per-producer jitter window.
+  },
+
+  "radio": { // LoRa radio settings for the selected board/region.
+    "frequency_hz": 910525000, // LoRa center frequency.
+    "bandwidth_hz": 62500, // LoRa bandwidth in hertz.
+    "spreading_factor": 7, // LoRa spreading factor.
+    "coding_rate": 5, // Coding-rate denominator; 5 means 4/5.
+    "tx_power_level": 14, // Board-level TX setting, mapped by the board crate.
+    "sync_word": 5156, // LoRa sync word as an integer.
+    "preamble_len": 16, // Preamble length in symbols.
+    "iq_inverted": false, // Whether LoRa IQ inversion is enabled.
+    "tx_ramp_time_us": 200 // SX126x TX ramp time.
+  },
+
+  "meshcore": { // Gateway MeshCore identity and routing.
+    "public_key": "gateway-public-key", // Gateway ID in MeshCore.
+    "private_key": "gateway-private-key", // Gateway MeshCore 64-byte expanded private key.
+    "routing": { // MeshCore route/path diagnostics settings.
+      "path_mode": 2 // MeshCore path.hash.mode: 0=1 byte, 1=2 bytes, 2=3 bytes.
+    }
+  },
+
+  "producers": [ // MeshCore-compatible telemetry producers to poll.
+    {
+      "public_key": "companion-public-key", // Producer ID in MeshCore.
+      "kind": "companion", // "companion" sends telemetry request directly; "repeater" logs in first.
+      "password": null, // Optional repeater password; companion producers must keep this null.
+      "name": "handheld_node", // Optional display/metrics name.
+      "enabled": true, // Set false to keep configured but skip polling.
+      "route": "direct" // "direct", "flood", or an explicit path later.
+    },
+    {
+      "public_key": "repeater-public-key", // Repeater ID in MeshCore.
+      "kind": "repeater", // Repeater polling uses MeshCore login before telemetry request.
+      "password": null, // Set to the repeater admin password when required.
+      "name": "roof_repeater", // Optional display/metrics name.
+      "enabled": false, // Enable after replacing the key and route with real values.
+      "route": "direct" // Use "flood" when direct routing is not available.
+    }
+  ]
+}
