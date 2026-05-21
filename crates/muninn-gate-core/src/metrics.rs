@@ -4,7 +4,7 @@ use core::fmt;
 
 use heapless::String;
 
-use crate::{Error, MetricsRenderer, TelemetryRecord, TelemetrySnapshot};
+use crate::{Error, MetricsRenderer, ProducerTelemetryChannel, TelemetryRecord, TelemetrySnapshot};
 
 /// Stateless Prometheus text renderer.
 pub struct PrometheusRenderer;
@@ -452,10 +452,7 @@ where
         writeln!(out)?;
     }
 
-    write_producer_help(out)?;
-    for record in snapshot.records.iter() {
-        write_producer_metrics(out, snapshot.gateway.uptime_ms, record)?;
-    }
+    write_producer_metric_families(out, snapshot.gateway.uptime_ms, &snapshot.records)?;
 
     Ok(())
 }
@@ -469,235 +466,258 @@ where
     Ok(())
 }
 
-fn write_producer_help<W>(out: &mut W) -> Result<(), Error>
-where
-    W: fmt::Write + ?Sized,
-{
-    write_help(
-        out,
-        "muninn_gate_node_battery_voltage",
-        "Telemetry producer battery voltage.",
-        "gauge",
-    )?;
-    write_help(
-        out,
-        "muninn_gate_node_battery_percent",
-        "Telemetry producer battery charge percent.",
-        "gauge",
-    )?;
-    write_help(
-        out,
-        "muninn_gate_node_temperature_celsius",
-        "Telemetry producer temperature in Celsius.",
-        "gauge",
-    )?;
-    write_help(
-        out,
-        "muninn_gate_node_humidity_percent",
-        "Telemetry producer relative humidity percent.",
-        "gauge",
-    )?;
-    write_help(
-        out,
-        "muninn_gate_node_pressure_pa",
-        "Telemetry producer pressure in pascals.",
-        "gauge",
-    )?;
-    write_help(
-        out,
-        "muninn_gate_node_rssi",
-        "Last received RSSI from telemetry producer.",
-        "gauge",
-    )?;
-    write_help(
-        out,
-        "muninn_gate_node_snr",
-        "Last received SNR from telemetry producer.",
-        "gauge",
-    )?;
-    write_help(
-        out,
-        "muninn_gate_node_uptime_ms",
-        "Telemetry producer reported uptime in milliseconds.",
-        "gauge",
-    )?;
-    write_help(
-        out,
-        "muninn_gate_node_channel_battery_voltage",
-        "Telemetry producer channel battery voltage.",
-        "gauge",
-    )?;
-    write_help(
-        out,
-        "muninn_gate_node_channel_battery_percent",
-        "Telemetry producer channel battery charge percent.",
-        "gauge",
-    )?;
-    write_help(
-        out,
-        "muninn_gate_node_channel_temperature_celsius",
-        "Telemetry producer channel temperature in Celsius.",
-        "gauge",
-    )?;
-    write_help(
-        out,
-        "muninn_gate_node_channel_humidity_percent",
-        "Telemetry producer channel relative humidity percent.",
-        "gauge",
-    )?;
-    write_help(
-        out,
-        "muninn_gate_node_channel_pressure_pa",
-        "Telemetry producer channel pressure in pascals.",
-        "gauge",
-    )?;
-    write_help(
-        out,
-        "muninn_gate_node_last_heard_age_ms",
-        "Age of the last received telemetry from the telemetry producer in milliseconds.",
-        "gauge",
-    )?;
-    write_help(
-        out,
-        "muninn_gate_node_last_poll_age_ms",
-        "Age of the last poll attempt for the telemetry producer in milliseconds.",
-        "gauge",
-    )?;
-    write_help(
-        out,
-        "muninn_gate_poll_success_total",
-        "Successful telemetry polls.",
-        "counter",
-    )?;
-    write_help(
-        out,
-        "muninn_gate_poll_failure_total",
-        "Failed telemetry polls.",
-        "counter",
-    )?;
-    write_help(
-        out,
-        "muninn_gate_poll_success_rate",
-        "Successful telemetry poll ratio.",
-        "gauge",
-    )?;
-    Ok(())
-}
-
-fn write_producer_metrics<W>(
+fn write_producer_metric_families<W>(
     out: &mut W,
     gateway_uptime_ms: u64,
-    record: &TelemetryRecord,
+    records: &[TelemetryRecord],
 ) -> Result<(), Error>
 where
     W: fmt::Write + ?Sized,
 {
-    if let Some(telemetry) = record.telemetry {
-        let metrics = telemetry.metrics;
-        write_producer_value(
-            out,
-            "muninn_gate_node_last_heard_age_ms",
-            record,
-            gateway_uptime_ms.saturating_sub(telemetry.timestamp_ms),
-        )?;
-        if let Some(value) = metrics.battery_voltage {
-            write_producer_value(out, "muninn_gate_node_battery_voltage", record, value)?;
-        }
-        if let Some(value) = metrics.battery_percent {
-            write_producer_value(out, "muninn_gate_node_battery_percent", record, value)?;
-        }
-        if let Some(value) = metrics.temperature_celsius {
-            write_producer_value(out, "muninn_gate_node_temperature_celsius", record, value)?;
-        }
-        if let Some(value) = metrics.humidity_percent {
-            write_producer_value(out, "muninn_gate_node_humidity_percent", record, value)?;
-        }
-        if let Some(value) = metrics.pressure_pa {
-            write_producer_value(out, "muninn_gate_node_pressure_pa", record, value)?;
-        }
-        if let Some(value) = telemetry.rssi {
-            write_producer_value(out, "muninn_gate_node_rssi", record, value)?;
-        }
-        if let Some(value) = telemetry.snr {
-            write_producer_value(out, "muninn_gate_node_snr", record, value)?;
-        }
-        if let Some(value) = telemetry.uptime_ms {
-            write_producer_value(out, "muninn_gate_node_uptime_ms", record, value)?;
-        }
-        for channel in telemetry.channels() {
-            let metrics = channel.metrics;
-            if let Some(value) = metrics.battery_voltage {
-                write_producer_channel_value(
-                    out,
-                    "muninn_gate_node_channel_battery_voltage",
-                    record,
-                    channel.channel_id,
-                    value,
-                )?;
-            }
-            if let Some(value) = metrics.battery_percent {
-                write_producer_channel_value(
-                    out,
-                    "muninn_gate_node_channel_battery_percent",
-                    record,
-                    channel.channel_id,
-                    value,
-                )?;
-            }
-            if let Some(value) = metrics.temperature_celsius {
-                write_producer_channel_value(
-                    out,
-                    "muninn_gate_node_channel_temperature_celsius",
-                    record,
-                    channel.channel_id,
-                    value,
-                )?;
-            }
-            if let Some(value) = metrics.humidity_percent {
-                write_producer_channel_value(
-                    out,
-                    "muninn_gate_node_channel_humidity_percent",
-                    record,
-                    channel.channel_id,
-                    value,
-                )?;
-            }
-            if let Some(value) = metrics.pressure_pa {
-                write_producer_channel_value(
-                    out,
-                    "muninn_gate_node_channel_pressure_pa",
-                    record,
-                    channel.channel_id,
-                    value,
-                )?;
-            }
-        }
-    }
-
-    if let Some(last_poll_ms) = record.poll.last_poll_ms {
-        write_producer_value(
-            out,
-            "muninn_gate_node_last_poll_age_ms",
-            record,
-            gateway_uptime_ms.saturating_sub(last_poll_ms),
-        )?;
-    }
-
-    write_producer_value(
+    write_optional_producer_family(
         out,
+        records,
+        "muninn_gate_node_battery_voltage",
+        "Telemetry producer battery voltage.",
+        "gauge",
+        |record| {
+            record
+                .telemetry
+                .and_then(|telemetry| telemetry.metrics.battery_voltage)
+        },
+    )?;
+    write_optional_producer_family(
+        out,
+        records,
+        "muninn_gate_node_battery_percent",
+        "Telemetry producer battery charge percent.",
+        "gauge",
+        |record| {
+            record
+                .telemetry
+                .and_then(|telemetry| telemetry.metrics.battery_percent)
+        },
+    )?;
+    write_optional_producer_family(
+        out,
+        records,
+        "muninn_gate_node_temperature_celsius",
+        "Telemetry producer temperature in Celsius.",
+        "gauge",
+        |record| {
+            record
+                .telemetry
+                .and_then(|telemetry| telemetry.metrics.temperature_celsius)
+        },
+    )?;
+    write_optional_producer_family(
+        out,
+        records,
+        "muninn_gate_node_humidity_percent",
+        "Telemetry producer relative humidity percent.",
+        "gauge",
+        |record| {
+            record
+                .telemetry
+                .and_then(|telemetry| telemetry.metrics.humidity_percent)
+        },
+    )?;
+    write_optional_producer_family(
+        out,
+        records,
+        "muninn_gate_node_pressure_pa",
+        "Telemetry producer pressure in pascals.",
+        "gauge",
+        |record| {
+            record
+                .telemetry
+                .and_then(|telemetry| telemetry.metrics.pressure_pa)
+        },
+    )?;
+    write_optional_producer_family(
+        out,
+        records,
+        "muninn_gate_node_rssi",
+        "Last received RSSI from telemetry producer.",
+        "gauge",
+        |record| record.telemetry.and_then(|telemetry| telemetry.rssi),
+    )?;
+    write_optional_producer_family(
+        out,
+        records,
+        "muninn_gate_node_snr",
+        "Last received SNR from telemetry producer.",
+        "gauge",
+        |record| record.telemetry.and_then(|telemetry| telemetry.snr),
+    )?;
+    write_optional_producer_family(
+        out,
+        records,
+        "muninn_gate_node_uptime_ms",
+        "Telemetry producer reported uptime in milliseconds.",
+        "gauge",
+        |record| record.telemetry.and_then(|telemetry| telemetry.uptime_ms),
+    )?;
+    write_optional_channel_family(
+        out,
+        records,
+        "muninn_gate_node_channel_battery_voltage",
+        "Telemetry producer channel battery voltage.",
+        "gauge",
+        |channel| channel.metrics.battery_voltage,
+    )?;
+    write_optional_channel_family(
+        out,
+        records,
+        "muninn_gate_node_channel_battery_percent",
+        "Telemetry producer channel battery charge percent.",
+        "gauge",
+        |channel| channel.metrics.battery_percent,
+    )?;
+    write_optional_channel_family(
+        out,
+        records,
+        "muninn_gate_node_channel_temperature_celsius",
+        "Telemetry producer channel temperature in Celsius.",
+        "gauge",
+        |channel| channel.metrics.temperature_celsius,
+    )?;
+    write_optional_channel_family(
+        out,
+        records,
+        "muninn_gate_node_channel_humidity_percent",
+        "Telemetry producer channel relative humidity percent.",
+        "gauge",
+        |channel| channel.metrics.humidity_percent,
+    )?;
+    write_optional_channel_family(
+        out,
+        records,
+        "muninn_gate_node_channel_pressure_pa",
+        "Telemetry producer channel pressure in pascals.",
+        "gauge",
+        |channel| channel.metrics.pressure_pa,
+    )?;
+    write_optional_producer_family(
+        out,
+        records,
+        "muninn_gate_node_last_heard_age_ms",
+        "Age of the last received telemetry from the telemetry producer in milliseconds.",
+        "gauge",
+        |record| {
+            record
+                .telemetry
+                .map(|telemetry| gateway_uptime_ms.saturating_sub(telemetry.timestamp_ms))
+        },
+    )?;
+    write_optional_producer_family(
+        out,
+        records,
+        "muninn_gate_node_last_poll_age_ms",
+        "Age of the last poll attempt for the telemetry producer in milliseconds.",
+        "gauge",
+        |record| {
+            record
+                .poll
+                .last_poll_ms
+                .map(|last_poll_ms| gateway_uptime_ms.saturating_sub(last_poll_ms))
+        },
+    )?;
+    write_required_producer_family(
+        out,
+        records,
         "muninn_gate_poll_success_total",
-        record,
-        record.poll.poll_success_total,
+        "Successful telemetry polls.",
+        "counter",
+        |record| record.poll.poll_success_total,
     )?;
-    write_producer_value(
+    write_required_producer_family(
         out,
+        records,
         "muninn_gate_poll_failure_total",
-        record,
-        record.poll.poll_failure_total,
+        "Failed telemetry polls.",
+        "counter",
+        |record| record.poll.poll_failure_total,
     )?;
-    if let Some(rate) = record.poll.poll_success_rate_per_mille() {
-        write_producer_value(out, "muninn_gate_poll_success_rate", record, PerMille(rate))?;
+    write_optional_producer_family(
+        out,
+        records,
+        "muninn_gate_poll_success_rate",
+        "Successful telemetry poll ratio.",
+        "gauge",
+        |record| record.poll.poll_success_rate_per_mille().map(PerMille),
+    )?;
+    Ok(())
+}
+
+fn write_required_producer_family<W, F, T>(
+    out: &mut W,
+    records: &[TelemetryRecord],
+    name: &str,
+    help: &str,
+    metric_type: &str,
+    value: F,
+) -> Result<(), Error>
+where
+    W: fmt::Write + ?Sized,
+    F: Fn(&TelemetryRecord) -> T,
+    T: fmt::Display,
+{
+    write_help(out, name, help, metric_type)?;
+    for record in records {
+        write_producer_value(out, name, record, value(record))?;
     }
+    writeln!(out)?;
+    Ok(())
+}
+
+fn write_optional_producer_family<W, F, T>(
+    out: &mut W,
+    records: &[TelemetryRecord],
+    name: &str,
+    help: &str,
+    metric_type: &str,
+    value: F,
+) -> Result<(), Error>
+where
+    W: fmt::Write + ?Sized,
+    F: Fn(&TelemetryRecord) -> Option<T>,
+    T: fmt::Display,
+{
+    write_help(out, name, help, metric_type)?;
+    for record in records {
+        if let Some(value) = value(record) {
+            write_producer_value(out, name, record, value)?;
+        }
+    }
+    writeln!(out)?;
+    Ok(())
+}
+
+fn write_optional_channel_family<W, F, T>(
+    out: &mut W,
+    records: &[TelemetryRecord],
+    name: &str,
+    help: &str,
+    metric_type: &str,
+    value: F,
+) -> Result<(), Error>
+where
+    W: fmt::Write + ?Sized,
+    F: Fn(&ProducerTelemetryChannel) -> Option<T>,
+    T: fmt::Display,
+{
+    write_help(out, name, help, metric_type)?;
+    for record in records {
+        if let Some(telemetry) = record.telemetry {
+            for channel in telemetry.channels() {
+                if let Some(value) = value(channel) {
+                    write_producer_channel_value(out, name, record, channel.channel_id, value)?;
+                }
+            }
+        }
+    }
+    writeln!(out)?;
     Ok(())
 }
 
@@ -787,7 +807,7 @@ mod tests
         config.meshcore.public_key = Some(fixed_string("gateway-public-key").unwrap());
         config
             .add_producer(
-                TelemetryProducerConfig::new("producer-public-key", "roof_repeater").unwrap(),
+                TelemetryProducerConfig::new("producer-public-key", "roof_repeater ").unwrap(),
             )
             .unwrap();
 
@@ -862,6 +882,18 @@ mod tests
         assert!(
             rendered.contains("muninn_gate_node_last_poll_age_ms{node=\"roof_repeater\"} 1000")
         );
+        assert_family_sample_before_next_help(
+            &rendered,
+            "muninn_gate_node_battery_voltage",
+            "muninn_gate_node_battery_percent",
+            "muninn_gate_node_battery_voltage{node=\"roof_repeater\"} 4.08",
+        );
+        assert_family_sample_before_next_help(
+            &rendered,
+            "muninn_gate_poll_success_total",
+            "muninn_gate_poll_failure_total",
+            "muninn_gate_poll_success_total{node=\"roof_repeater\"} 1",
+        );
     }
 
     #[test]
@@ -877,5 +909,29 @@ mod tests
         let rendered = render_prometheus::<1, 8192>(&store.snapshot()).unwrap();
 
         assert!(rendered.contains("muninn_gate_poll_success_total{node=\"lab\\\"node\"} 0"));
+    }
+
+    fn assert_family_sample_before_next_help(
+        rendered: &str,
+        family: &str,
+        next_family: &str,
+        sample: &str,
+    )
+    {
+        let help = find_required(rendered, &format!("# HELP {family} "));
+        let metric_type = find_required(rendered, &format!("# TYPE {family} "));
+        let sample = find_required(rendered, sample);
+        let next_help = find_required(rendered, &format!("# HELP {next_family} "));
+
+        assert!(help < metric_type);
+        assert!(metric_type < sample);
+        assert!(sample < next_help);
+    }
+
+    fn find_required(rendered: &str, needle: &str) -> usize
+    {
+        rendered
+            .find(needle)
+            .unwrap_or_else(|| panic!("missing expected output: {needle}"))
     }
 }

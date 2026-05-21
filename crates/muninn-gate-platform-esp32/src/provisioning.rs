@@ -10,6 +10,7 @@ use muninn_gate_core::config::{
     DEFAULT_MESHCORE_PATH_MODE,
     MAX_TELEMETRY_PRODUCERS,
     fixed_string,
+    fixed_trimmed_string,
 };
 use muninn_gate_core::{
     DisplaySettings,
@@ -82,8 +83,10 @@ pub fn parse_usb_document(input: &str) -> Result<ProvisioningCommand, Provisioni
 {
     let json = strip_jsonc_comments(input)?;
 
-    if let Ok(config) = parse_config_document(json.as_str()) {
-        return Ok(ProvisioningCommand::SetConfig(config));
+    match parse_config_document(json.as_str()) {
+        Ok(config) => return Ok(ProvisioningCommand::SetConfig(config)),
+        Err(ProvisioningError::Json) => {},
+        Err(error) => return Err(error),
     }
 
     let command: WireProvisioningCommand =
@@ -102,6 +105,7 @@ pub fn parse_usb_document(input: &str) -> Result<ProvisioningCommand, Provisioni
     }
 }
 
+/// Parse one raw gateway config JSON object.
 fn parse_config_document(
     input: &str,
 ) -> Result<Box<GatewayConfig<MAX_TELEMETRY_PRODUCERS>>, ProvisioningError>
@@ -115,7 +119,7 @@ fn parse_config_wire(
     wire: Box<WireGatewayConfig>,
 ) -> Result<Box<GatewayConfig<MAX_TELEMETRY_PRODUCERS>>, ProvisioningError>
 {
-    let config = wire.into_config()?;
+    let config = wire.to_config()?;
     config
         .validate()
         .map_err(|_| ProvisioningError::InvalidConfig)?;
@@ -195,34 +199,38 @@ struct WireGatewayConfig
 
 impl WireGatewayConfig
 {
-    fn into_config(
-        self: Box<Self>,
-    ) -> Result<Box<GatewayConfig<MAX_TELEMETRY_PRODUCERS>>, ProvisioningError>
+    fn to_config(&self) -> Result<Box<GatewayConfig<MAX_TELEMETRY_PRODUCERS>>, ProvisioningError>
     {
-        let wire = *self;
         let mut config = Box::<GatewayConfig<MAX_TELEMETRY_PRODUCERS>>::default();
-        config.name =
-            fixed_string(wire.name.as_str()).map_err(|_| ProvisioningError::InvalidConfig)?;
-        config.http = wire.http.map(WireHttpConfig::into_config).transpose()?;
-        config.display = wire
+        config.name = fixed_trimmed_string(self.name.as_str())
+            .map_err(|_| ProvisioningError::InvalidConfig)?;
+        config.http = self
+            .http
+            .as_ref()
+            .map(WireHttpConfig::to_config)
+            .transpose()?;
+        config.display = self
             .display
-            .map(WireDisplayConfig::into_config)
+            .as_ref()
+            .map(WireDisplayConfig::to_config)
             .transpose()?
             .unwrap_or(DisplaySettings::Off);
-        config.polling = wire
+        config.polling = self
             .polling
-            .map(WirePollingConfig::into_config)
+            .as_ref()
+            .map(WirePollingConfig::to_config)
             .unwrap_or_default();
-        config.radio = wire
+        config.radio = self
             .radio
-            .map(WireRadioConfig::into_config)
+            .as_ref()
+            .map(WireRadioConfig::to_config)
             .unwrap_or_default();
-        config.meshcore = wire.meshcore.into_config()?;
+        config.meshcore = self.meshcore.to_config()?;
 
-        if let Some(producers) = wire.producers {
+        if let Some(producers) = self.producers.as_ref() {
             for producer in producers {
                 config
-                    .add_producer(producer.into_config()?)
+                    .add_producer(producer.to_config()?)
                     .map_err(|_| ProvisioningError::InvalidConfig)?;
             }
         }
@@ -243,7 +251,7 @@ struct WireHttpConfig
 
 impl WireHttpConfig
 {
-    fn into_config(self) -> Result<HttpConfig, ProvisioningError>
+    fn to_config(&self) -> Result<HttpConfig, ProvisioningError>
     {
         let mut http = HttpConfig::new(
             self.port.unwrap_or(DEFAULT_HTTP_PORT),
@@ -253,7 +261,7 @@ impl WireHttpConfig
         )
         .map_err(|_| ProvisioningError::InvalidConfig)?;
 
-        if let Some(tokens) = self.tokens {
+        if let Some(tokens) = self.tokens.as_ref() {
             for token in tokens {
                 http.add_token(token.as_str())
                     .map_err(|_| ProvisioningError::InvalidConfig)?;
@@ -274,7 +282,7 @@ struct WireDisplayConfig
 
 impl WireDisplayConfig
 {
-    fn into_config(self) -> Result<DisplaySettings, ProvisioningError>
+    fn to_config(&self) -> Result<DisplaySettings, ProvisioningError>
     {
         if !self.enabled {
             return Ok(DisplaySettings::Off);
@@ -308,7 +316,7 @@ struct WirePollingConfig
 
 impl WirePollingConfig
 {
-    fn into_config(self) -> PollingConfig
+    fn to_config(&self) -> PollingConfig
     {
         let mut polling = PollingConfig::default();
         if let Some(default_interval_secs) = self.default_interval_secs {
@@ -337,7 +345,7 @@ struct WireRadioConfig
 
 impl WireRadioConfig
 {
-    fn into_config(self) -> RadioParams
+    fn to_config(&self) -> RadioParams
     {
         let mut radio = RadioParams::default();
         if let Some(frequency_hz) = self.frequency_hz {
@@ -381,7 +389,7 @@ struct WireMeshcoreConfig
 
 impl WireMeshcoreConfig
 {
-    fn into_config(self) -> Result<MeshcoreConfig, ProvisioningError>
+    fn to_config(&self) -> Result<MeshcoreConfig, ProvisioningError>
     {
         Ok(MeshcoreConfig {
             public_key:  Some(
@@ -390,12 +398,14 @@ impl WireMeshcoreConfig
             ),
             private_key: self
                 .private_key
-                .map(|key| fixed_string(key.as_str()))
+                .as_deref()
+                .map(fixed_string)
                 .transpose()
                 .map_err(|_| ProvisioningError::InvalidConfig)?,
             routing:     self
                 .routing
-                .map(WireMeshcoreRoutingConfig::into_config)
+                .as_ref()
+                .map(WireMeshcoreRoutingConfig::to_config)
                 .unwrap_or_default(),
         })
     }
@@ -409,7 +419,7 @@ struct WireMeshcoreRoutingConfig
 
 impl WireMeshcoreRoutingConfig
 {
-    fn into_config(self) -> MeshcoreRoutingConfig
+    fn to_config(&self) -> MeshcoreRoutingConfig
     {
         MeshcoreRoutingConfig {
             path_mode: self.path_mode.unwrap_or(DEFAULT_MESHCORE_PATH_MODE),
@@ -431,7 +441,7 @@ struct WireProducerConfig
 
 impl WireProducerConfig
 {
-    fn into_config(self) -> Result<TelemetryProducerConfig, ProvisioningError>
+    fn to_config(&self) -> Result<TelemetryProducerConfig, ProvisioningError>
     {
         let mut producer = TelemetryProducerConfig::new(
             self.public_key.as_str(),
@@ -446,7 +456,8 @@ impl WireProducerConfig
             .unwrap_or_default();
         producer.password = self
             .password
-            .map(|password| fixed_string(password.as_str()))
+            .as_deref()
+            .map(fixed_string)
             .transpose()
             .map_err(|_| ProvisioningError::InvalidConfig)?;
         producer.enabled = self.enabled.unwrap_or(true);

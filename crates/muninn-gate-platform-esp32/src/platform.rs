@@ -1,6 +1,6 @@
 //! ESP32-S3 platform initialization and platform service hooks.
 
-use alloc::boxed::Box;
+use core::mem::MaybeUninit;
 
 use esp_hal::Blocking;
 use esp_hal::clock::CpuClock;
@@ -28,7 +28,6 @@ use esp_hal::peripherals::{
     GPIO46,
     I2C0,
     SPI2,
-    USB_DEVICE,
     WIFI,
 };
 use esp_hal::rng::Rng;
@@ -38,15 +37,19 @@ use esp_hal::timer::timg::{Timer, TimerGroup};
 use esp_hal::usb_serial_jtag::UsbSerialJtag;
 use esp_wifi::EspWifiController;
 use muninn_gate_core::Clock;
+use static_cell::StaticCell;
 
 /// Stack reserved for the dedicated LoRa/MeshCore APP CPU task.
 pub const RADIO_MESHCORE_STACK_BYTES: usize = 32 * 1024;
-/// Internal allocator used by firmware code.
-pub const INTERNAL_HEAP_BYTES: usize = 72 * 1024;
+/// Internal heap backed by the ESP32-S3 DRAM2 region.
+pub const FIRMWARE_DRAM2_HEAP_BYTES: usize = 70 * 1024;
+/// Internal heap spillover in the regular DRAM segment.
+pub const FIRMWARE_DRAM_HEAP_BYTES: usize = 32 * 1024;
 /// Settle time after enabling the board external peripheral rail.
 pub const EXTERNAL_POWER_SETTLE_MS: u32 = 200;
 
 static mut RADIO_MESHCORE_STACK: Stack<RADIO_MESHCORE_STACK_BYTES> = Stack::new();
+static WIFI_CONTROLLER: StaticCell<EspWifiController<'static>> = StaticCell::new();
 
 /// ESP HAL resources consumed by the WiFi station runtime.
 pub struct Esp32WifiResources
@@ -97,7 +100,7 @@ impl Esp32WifiResources
             .take()
             .ok_or(Esp32WifiInitError::ResourcesUnavailable)?;
         let init = esp_wifi::init(timer0, rng).map_err(|_| Esp32WifiInitError::DriverInit)?;
-        let init = Box::leak(Box::new(init));
+        let init = WIFI_CONTROLLER.init(init);
 
         Ok((init, wifi))
     }
@@ -281,15 +284,15 @@ pub struct Esp32Platform
     app_core_guard:  Option<AppCoreGuard<'static>>,
     wifi_resources:  Option<Esp32WifiResources>,
     board_resources: Option<Esp32BoardResources>,
-    usb_device:      Option<USB_DEVICE<'static>>,
+    usb_serial:      Option<UsbSerialJtag<'static, Blocking>>,
 }
 
 /// Initialize ESP HAL and return platform services used by the gateway.
 pub fn init() -> Esp32Platform
 {
-    esp_alloc::heap_allocator!(size: INTERNAL_HEAP_BYTES);
+    init_firmware_heap();
 
-    let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
+    let config = esp_hal::Config::default().with_cpu_clock(CpuClock::_80MHz);
     let peripherals = esp_hal::init(config);
     let cpu_control = CpuControl::new(peripherals.CPU_CTRL);
     let timg0 = TimerGroup::new(peripherals.TIMG0);
@@ -305,7 +308,7 @@ pub fn init() -> Esp32Platform
             rng:    Some(Rng::new(peripherals.RNG)),
             wifi:   Some(peripherals.WIFI),
         }),
-        usb_device: Some(peripherals.USB_DEVICE),
+        usb_serial: Some(UsbSerialJtag::new(peripherals.USB_DEVICE)),
         board_resources: Some(Esp32BoardResources {
             radio:   Esp32RadioResources {
                 spi2:           peripherals.SPI2,
@@ -335,6 +338,26 @@ pub fn init() -> Esp32Platform
             },
             vext:    peripherals.GPIO36,
         }),
+    }
+}
+
+fn init_firmware_heap()
+{
+    #[unsafe(link_section = ".dram2_uninit")]
+    static mut HEAP_DRAM2: MaybeUninit<[u8; FIRMWARE_DRAM2_HEAP_BYTES]> = MaybeUninit::uninit();
+    static mut HEAP_DRAM: MaybeUninit<[u8; FIRMWARE_DRAM_HEAP_BYTES]> = MaybeUninit::uninit();
+
+    unsafe {
+        esp_alloc::HEAP.add_region(esp_alloc::HeapRegion::new(
+            core::ptr::addr_of_mut!(HEAP_DRAM2).cast(),
+            FIRMWARE_DRAM2_HEAP_BYTES,
+            esp_alloc::MemoryCapability::Internal.into(),
+        ));
+        esp_alloc::HEAP.add_region(esp_alloc::HeapRegion::new(
+            core::ptr::addr_of_mut!(HEAP_DRAM).cast(),
+            FIRMWARE_DRAM_HEAP_BYTES,
+            esp_alloc::MemoryCapability::Internal.into(),
+        ));
     }
 }
 
@@ -376,7 +399,7 @@ impl Esp32Platform
     /// Take USB Serial/JTAG for USB provisioning input.
     pub fn take_usb_serial(&mut self) -> Option<UsbSerialJtag<'static, Blocking>>
     {
-        self.usb_device.take().map(UsbSerialJtag::new)
+        self.usb_serial.take()
     }
 }
 
@@ -389,7 +412,11 @@ impl Clock for Esp32Platform
 }
 
 /// Return platform-reported free heap bytes, when available.
+///
+/// `esp_alloc` exposes heap statistics through an internal `RefCell`; querying
+/// it from telemetry can re-enter the allocator during WiFi startup. Keep this
+/// unavailable until the allocator exposes a non-reentrant stats API.
 pub fn free_heap_bytes() -> Option<u32>
 {
-    Some(esp_alloc::HEAP.free_caps(esp_alloc::MemoryCapability::Internal.into()) as u32)
+    None
 }

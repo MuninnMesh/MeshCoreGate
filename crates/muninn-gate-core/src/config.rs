@@ -464,7 +464,7 @@ impl TelemetryProducerConfig
             public_key:            fixed_string(public_key)?,
             kind:                  TelemetryProducerKind::Companion,
             password:              None,
-            name:                  fixed_string(name)?,
+            name:                  fixed_trimmed_string(name)?,
             enabled:               true,
             polling_interval_secs: None,
             route:                 TelemetryRoute::Direct,
@@ -514,7 +514,7 @@ impl<const N: usize> GatewayConfig<N>
     pub fn new(name: &str) -> Result<Self, Error>
     {
         Ok(Self {
-            name:      fixed_string(name)?,
+            name:      fixed_trimmed_string(name)?,
             http:      None,
             display:   DisplaySettings::Off,
             producers: Vec::new(),
@@ -627,6 +627,12 @@ pub fn fixed_string<const N: usize>(value: &str) -> Result<String<N>, Error>
     Ok(out)
 }
 
+/// Copy a human-facing display string after trimming surrounding whitespace.
+pub fn fixed_trimmed_string<const N: usize>(value: &str) -> Result<String<N>, Error>
+{
+    fixed_string(value.trim())
+}
+
 const fn supported_bandwidth_hz(value: u32) -> bool
 {
     matches!(
@@ -678,6 +684,16 @@ mod tests
         let producer = TelemetryProducerConfig::new("producer-public-key", "roof").unwrap();
 
         assert_eq!(producer.kind, TelemetryProducerKind::Companion);
+    }
+
+    #[test]
+    fn trims_configured_display_names()
+    {
+        let config = GatewayConfig::<1>::new(" gate ").unwrap();
+        let producer = TelemetryProducerConfig::new("producer-public-key", " roof ").unwrap();
+
+        assert_eq!(config.name.as_str(), "gate");
+        assert_eq!(producer.name.as_str(), "roof");
     }
 
     #[test]

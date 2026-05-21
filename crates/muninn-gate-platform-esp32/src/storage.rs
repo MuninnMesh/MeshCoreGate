@@ -1,9 +1,10 @@
 //! ESP32 flash-backed configuration storage.
 //!
-//! The ESP32 platform stores the validated provisioning document in the
-//! dedicated `muninn_cfg` data partition. Boot loads that document and passes
-//! it through the same USB provisioning parser, so there is one config format
-//! and one validation path.
+//! The ESP32 platform stores the validated provisioning document in flash.
+//!
+//! The firmware uses the dedicated `muninn_cfg` data partition from
+//! `partitions.csv`. It stores two raw flash sectors with A/B rollover,
+//! sequence numbers, and CRC verification.
 
 use core::cmp::min;
 
@@ -23,16 +24,18 @@ use crate::provisioning::{ProvisioningCommand, USB_CONFIG_JSON_BYTES, parse_usb_
 /// Gateway config type stored by the ESP32 platform.
 pub type Esp32GatewayConfig = GatewayConfig<MAX_TELEMETRY_PRODUCERS>;
 
-/// ESP-IDF partition table flash address.
+/// ESP partition table flash address.
 const PART_TABLE_ADDR: u32 = 0x8000;
-/// Maximum entries in the ESP-IDF partition table sector.
+/// Maximum entries in the ESP partition table sector.
 const PART_TABLE_ENTRIES: usize = 96;
-/// ESP-IDF partition table entry size in bytes.
+/// ESP partition table entry size in bytes.
 const PART_TABLE_ENTRY_SIZE: usize = 32;
-/// ESP-IDF partition entry magic value.
+/// ESP partition entry magic value.
 const PART_MAGIC: u16 = 0x50AA;
-/// ESP-IDF data partition type.
+/// ESP data partition type.
 const PART_TYPE_DATA: u8 = 0x01;
+/// Preferred config partition label.
+const CONFIG_PARTITION_LABEL: &str = "muninn_cfg";
 /// One SPI flash sector in bytes.
 const SECTOR_SIZE: u32 = 4096;
 /// Two-sector A/B config storage footprint.
@@ -69,10 +72,11 @@ pub fn load_config() -> Result<Esp32GatewayConfig, Error>
 }
 
 /// Save a validated gateway configuration and its source document to flash.
-pub fn save_config_document(document: &str, config: &Esp32GatewayConfig) -> Result<(), Error>
+pub fn save_config_document(document: &str, config: &Esp32GatewayConfig)
+-> Result<(), StorageError>
 {
-    config.validate()?;
-    save_config_bytes(document.as_bytes()).map_err(|_| Error::Storage)
+    config.validate().map_err(|_| StorageError::InvalidConfig)?;
+    save_config_bytes(document.as_bytes())
 }
 
 /// Load the newest valid config document from flash.
@@ -315,8 +319,11 @@ fn resolve_config_base_addr() -> Result<u32, StorageError>
             .unwrap_or(label_raw.len());
         let label = core::str::from_utf8(&label_raw[..label_len]).unwrap_or("");
 
-        if partition_type == PART_TYPE_DATA && label == "muninn_cfg" && size >= CONFIG_STORAGE_BYTES
-        {
+        if partition_type != PART_TYPE_DATA || size < CONFIG_STORAGE_BYTES {
+            continue;
+        }
+
+        if label == CONFIG_PARTITION_LABEL {
             chosen = Some((offset, size));
             break;
         }
@@ -397,10 +404,12 @@ struct StoredSlot
     payload_crc: u32,
 }
 
-/// Internal storage failure.
+/// Config storage failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum StorageError
+pub enum StorageError
 {
+    /// Config failed validation before saving.
+    InvalidConfig,
     /// Config partition could not be found.
     PartitionNotFound,
     /// No valid stored config exists.
@@ -415,4 +424,35 @@ enum StorageError
     Erase(i32),
     /// Flash write failed with ROM return code.
     Write(i32),
+}
+
+impl StorageError
+{
+    /// Stable machine-readable error code for USB responses and diagnostics.
+    pub const fn as_code(self) -> &'static str
+    {
+        match self {
+            Self::InvalidConfig => "invalid_config",
+            Self::PartitionNotFound => "storage_partition_not_found",
+            Self::NotFound => "storage_not_found",
+            Self::TooLarge => "storage_too_large",
+            Self::Corrupt => "storage_corrupt",
+            Self::Read(_) => "storage_read",
+            Self::Erase(_) => "storage_erase",
+            Self::Write(_) => "storage_write",
+        }
+    }
+
+    /// ESP ROM flash return code when this error came from a flash operation.
+    pub const fn rom_code(self) -> Option<i32>
+    {
+        match self {
+            Self::Read(code) | Self::Erase(code) | Self::Write(code) => Some(code),
+            Self::InvalidConfig
+            | Self::PartitionNotFound
+            | Self::NotFound
+            | Self::TooLarge
+            | Self::Corrupt => None,
+        }
+    }
 }

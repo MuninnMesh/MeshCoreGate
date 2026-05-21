@@ -19,7 +19,7 @@ ESP_WIFI_CONFIG_AMPDU_RX_ENABLE = "false"
 ESP_WIFI_CONFIG_AMPDU_TX_ENABLE = "false"
 
 [target.xtensa-esp32s3-none-elf]
-runner = "espflash flash --partition-table partitions.csv --monitor"
+runner = "espflash flash --flash-size 16mb --partition-table partitions.csv --monitor"
 linker = "ldproxy"
 rustflags = [
     "-C", "link-arg=--ldproxy-linker",

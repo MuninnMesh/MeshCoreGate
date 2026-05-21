@@ -174,7 +174,7 @@ pub trait DiagnosticCollector<const N: usize = DEFAULT_DIAGNOSTIC_EVENT_LIMIT>
 
 /// Fixed-capacity diagnostic collector useful for tests and simple builds.
 ///
-/// Production ESP32 builds should prefer a flash/NVS-backed implementation
+/// Production ESP32 builds should prefer a flash-backed implementation
 /// when retaining diagnostics across crashes or reboots is more important
 /// than minimizing writes.
 #[derive(Debug, Clone, PartialEq, Eq)]

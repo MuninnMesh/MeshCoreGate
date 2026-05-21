@@ -40,6 +40,7 @@ Flash a connected ESP32-S3 board:
 
 ```sh
 cargo espflash flash \
+  --flash-size 16mb \
   --partition-table partitions.csv \
   --package muninn-gate-firmware \
   --bin muninn-gate \
@@ -50,8 +51,9 @@ cargo espflash flash \
   --monitor
 ```
 
-The partition table is required. It provides the dedicated `muninn_cfg`
-partition used for persisted USB provisioning config.
+The 16 MB flash size and partition table are required for the Heltec V4.x
+layout. The table provides the dedicated raw `muninn_cfg` partition used for
+persisted USB provisioning config; Muninn Gate does not store its config in NVS.
 
 ## Provisioning
 
@@ -95,6 +97,10 @@ curl -H "Authorization: Bearer ${TOKEN}" http://<device-ip>/metrics
 curl -H "Authorization: Bearer ${TOKEN}" http://<device-ip>/logs
 curl -H "Authorization: Bearer ${TOKEN}" http://<device-ip>/poll
 ```
+
+The ESP32 path uses `esp-wifi` station mode with `smoltcp` DHCP/TCP. The WiFi
+driver uses `esp-wifi`'s `esp-alloc` integration and RAM-backed driver state;
+the firmware does not add a separate NVS partition for WiFi credentials.
 
 ## USB Serial
 

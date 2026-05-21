@@ -7,12 +7,15 @@ Install the tool environment:
 
 Validate and upload a config when the firmware provisioning window opens:
 
-    uv run python tools/cli.py config.json /dev/cu.usbmodemXXXX
+    uv run python tools/cli.py config.json
 
 Generate/persist MeshCore gateway keys, set WiFi, and upload:
 
-    uv run python tools/cli.py config.json /dev/cu.usbmodemXXXX \
-      --keys --wifi "wifi-name" "wifi-password"
+    uv run python tools/cli.py config.json --keys --wifi "wifi-name" "wifi-password"
+
+Use an explicit port only when more than one USB serial device is attached:
+
+    uv run python tools/cli.py config.json /dev/cu.usbmodemXXXX
 
 Generate a config without uploading:
 
@@ -41,13 +44,14 @@ CHUNK_SIZE = 32
 CHUNK_DELAY_SECS = 0.02
 READY_TIMEOUT_SECS = 60.0
 RESPONSE_TIMEOUT_SECS = 15.0
-HANDSHAKE_TIMEOUT_SECS = 1.5
 WRITE_TIMEOUT_SECS = 5.0
+AUTO_PORT_WAIT_SECS = 20.0
 READY_MARKER = r'{"type":"ready","request":"set_config"}'
-STATUS_REQUEST = b'{"type":"status"}\n'
 SERIAL_PORT_PATTERNS = (
     "/dev/cu.usbmodem*",
     "/dev/cu.usbserial*",
+    "/dev/cu.wchusbserial*",
+    "/dev/cu.SLAB_USBtoUART*",
     "/dev/ttyACM*",
     "/dev/ttyUSB*",
 )
@@ -58,13 +62,27 @@ DISCONNECT_ERRNOS = {
     errno.ENOENT,
     errno.ENXIO,
 }
+DISPLAY_VALUES = {
+    "temperature",
+    "humidity",
+    "soc",
+    "battery_voltage",
+    "pressure",
+    "rssi",
+    "latency",
+}
+RADIO_BANDWIDTH_HZ = {7810, 10420, 15630, 20830, 31250, 41670, 62500, 125000, 250000, 500000}
+RADIO_RAMP_US = {10, 20, 40, 80, 200, 800, 1700, 3400}
 
 
 def main() -> int:
     """Run the CLI."""
     args = build_parser().parse_args()
+    normalize_args(args)
     data = prepare_config(args)
     write_output(args, data)
+    if args.port is None and not args.output:
+        args.port = discover_serial_port(AUTO_PORT_WAIT_SECS)
     if args.port:
         upload_config(args.port, data)
     elif not args.output:
@@ -102,11 +120,24 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def normalize_args(args: argparse.Namespace) -> None:
+    """Normalize shorthand forms before loading config."""
+    if args.port is None and is_serial_path(args.template):
+        args.port = args.template
+        args.template = "config.json"
+
+
+def is_serial_path(value: str) -> bool:
+    """Return true when a positional argument looks like a serial device."""
+    return value.startswith("/dev/cu.") or value.startswith("/dev/tty.")
+
+
 def prepare_config(args: argparse.Namespace) -> bytes:
     """Load, update, validate, and serialize the requested config."""
     config = load_config(Path(args.template))
     apply_overrides(config, args)
-    return json.dumps(config, indent=2).encode("utf-8") + b"\n"
+    validate_config(config)
+    return json.dumps(config, indent=2, ensure_ascii=False).encode("utf-8") + b"\n"
 
 
 def write_output(args: argparse.Namespace, data: bytes) -> None:
@@ -207,6 +238,191 @@ def http_section(config: dict[str, Any]) -> dict[str, Any]:
         }
         config["http"] = http
     return http
+
+
+def validate_config(config: dict[str, Any]) -> None:
+    """Reject config that cannot pass firmware validation."""
+    expect_text(config, "name", min_len=1, max_len=32)
+    validate_http(config.get("http"))
+    validate_display(config.get("display"))
+    validate_polling(config.get("polling"))
+    validate_radio(config.get("radio"))
+    validate_meshcore(config.get("meshcore"))
+    validate_producers(config.get("producers"))
+
+
+def validate_http(http: Any) -> None:
+    """Validate optional HTTP/WiFi configuration."""
+    if http is None:
+        return
+    if not isinstance(http, dict):
+        fail("http must be an object or null")
+    port = http.get("port", 80)
+    if not isinstance(port, int) or not 1 <= port <= 65535:
+        fail("http.port must be 1..65535")
+    if not isinstance(http.get("tls", False), bool):
+        fail("http.tls must be true or false")
+    expect_text(http, "wifi_ssid", min_len=1, max_len=32)
+    password = http.get("wifi_password", "")
+    if password is not None:
+        expect_text(http, "wifi_password", min_len=0, max_len=64)
+    tokens = http.get("tokens", [])
+    if tokens is None:
+        return
+    if not isinstance(tokens, list) or len(tokens) > 8:
+        fail("http.tokens must be null or a list of up to 8 tokens")
+    for index, token in enumerate(tokens):
+        if not isinstance(token, str) or not 1 <= utf8_len(token) <= 96:
+            fail(f"http.tokens[{index}] must be 1..96 UTF-8 bytes")
+
+
+def validate_display(display: Any) -> None:
+    """Validate optional OLED display configuration."""
+    if display is None:
+        return
+    if not isinstance(display, dict):
+        fail("display must be an object or null")
+    if not isinstance(display.get("enabled"), bool):
+        fail("display.enabled must be true or false")
+    value = display.get("node_display")
+    if value is not None and value not in DISPLAY_VALUES:
+        fail("display.node_display has an unsupported value")
+    brightness = display.get("brightness_percent", 60)
+    if not isinstance(brightness, int) or not 0 <= brightness <= 100:
+        fail("display.brightness_percent must be 0..100")
+
+
+def validate_polling(polling: Any) -> None:
+    """Validate global polling policy."""
+    if polling is None:
+        return
+    if not isinstance(polling, dict):
+        fail("polling must be an object or null")
+    interval = polling.get("default_interval_secs", 600)
+    jitter = polling.get("jitter_secs", 10)
+    if not isinstance(interval, int) or not 60 <= interval <= 3600:
+        fail("polling.default_interval_secs must be 60..3600")
+    if not isinstance(jitter, int) or not 0 <= jitter <= 60:
+        fail("polling.jitter_secs must be 0..60")
+
+
+def validate_radio(radio: Any) -> None:
+    """Validate LoRa radio parameters accepted by firmware."""
+    if radio is None:
+        return
+    if not isinstance(radio, dict):
+        fail("radio must be an object or null")
+    positive_int(radio, "frequency_hz", default=910525000)
+    if radio.get("bandwidth_hz", 62500) not in RADIO_BANDWIDTH_HZ:
+        fail("radio.bandwidth_hz is unsupported")
+    int_range(radio, "spreading_factor", default=7, min_value=5, max_value=12)
+    int_range(radio, "coding_rate", default=5, min_value=5, max_value=8)
+    int_range(radio, "tx_power_level", default=14, min_value=-9, max_value=22)
+    positive_int(radio, "preamble_len", default=16)
+    if radio.get("tx_ramp_time_us", 200) not in RADIO_RAMP_US:
+        fail("radio.tx_ramp_time_us is unsupported")
+    if not isinstance(radio.get("iq_inverted", False), bool):
+        fail("radio.iq_inverted must be true or false")
+
+
+def validate_meshcore(meshcore: Any) -> None:
+    """Validate gateway MeshCore identity."""
+    if not isinstance(meshcore, dict):
+        fail("meshcore must be an object")
+    expect_text(meshcore, "public_key", min_len=1, max_len=128)
+    private_key = meshcore.get("private_key")
+    if private_key is not None:
+        expect_text(meshcore, "private_key", min_len=1, max_len=128)
+    routing = meshcore.get("routing", {})
+    if routing is not None:
+        if not isinstance(routing, dict):
+            fail("meshcore.routing must be an object or null")
+        path_mode = routing.get("path_mode", 2)
+        if not isinstance(path_mode, int) or not 0 <= path_mode <= 2:
+            fail("meshcore.routing.path_mode must be 0, 1, or 2")
+
+
+def validate_producers(producers: Any) -> None:
+    """Validate producer list."""
+    if producers is None:
+        return
+    if not isinstance(producers, list) or len(producers) > 16:
+        fail("producers must be a list of up to 16 items")
+    seen: set[str] = set()
+    for index, producer in enumerate(producers):
+        if not isinstance(producer, dict):
+            fail(f"producers[{index}] must be an object")
+        public_key = expect_text(producer, "public_key", min_len=1, max_len=128)
+        if public_key in seen:
+            fail(f"producers[{index}].public_key duplicates another producer")
+        seen.add(public_key)
+        kind = producer.get("kind", "companion")
+        if kind not in {"companion", "repeater"}:
+            fail(f"producers[{index}].kind must be companion or repeater")
+        name = producer.get("name", "")
+        if name is not None:
+            expect_text(producer, "name", min_len=0, max_len=32)
+        password = producer.get("password")
+        if password is not None:
+            expect_text(producer, "password", min_len=1, max_len=128)
+            if kind == "companion":
+                fail(f"producers[{index}].password is only valid for repeater producers")
+        interval = producer.get("polling_interval_secs")
+        if interval is not None and (not isinstance(interval, int) or not 60 <= interval <= 3600):
+            fail(f"producers[{index}].polling_interval_secs must be 60..3600")
+        route = producer.get("route", "direct")
+        if not isinstance(route, str) or not route:
+            fail(f"producers[{index}].route must be direct, flood, or a path string")
+        if route not in {"direct", "flood"} and utf8_len(route) > 96:
+            fail(f"producers[{index}].route path must fit in 96 UTF-8 bytes")
+
+
+def expect_text(
+    section: dict[str, Any],
+    field: str,
+    *,
+    min_len: int,
+    max_len: int,
+) -> str:
+    """Return a required string field after checking UTF-8 byte length."""
+    value = section.get(field)
+    if not isinstance(value, str):
+        fail(f"{field} must be a string")
+    length = utf8_len(value)
+    if length < min_len or length > max_len:
+        fail(f"{field} must be {min_len}..{max_len} UTF-8 bytes")
+    return value
+
+
+def positive_int(section: dict[str, Any], field: str, default: int | None = None) -> None:
+    """Validate an optional positive integer field."""
+    value = section.get(field, default)
+    if not isinstance(value, int) or value <= 0:
+        fail(f"{field} must be a positive integer")
+
+
+def int_range(
+    section: dict[str, Any],
+    field: str,
+    *,
+    default: int,
+    min_value: int,
+    max_value: int,
+) -> None:
+    """Validate an optional integer range field."""
+    value = section.get(field, default)
+    if not isinstance(value, int) or not min_value <= value <= max_value:
+        fail(f"{field} must be {min_value}..{max_value}")
+
+
+def utf8_len(value: str) -> int:
+    """Return UTF-8 byte length used by firmware fixed strings."""
+    return len(value.encode("utf-8"))
+
+
+def fail(message: str) -> None:
+    """Exit with one validation error."""
+    raise SystemExit(f"ERROR: invalid config: {message}")
 
 
 def output_path_for_args(args: argparse.Namespace) -> Path | None:
@@ -365,11 +581,8 @@ def wait_for_ready(port: str) -> tuple[int, str]:
                 seen += text
                 last_seen_line = last_output_line(text) or last_seen_line
                 if READY_MARKER in seen:
-                    if verify_live_config_receiver(fd):
-                        print("Provisioning window detected.", file=sys.stderr)
-                        return fd, active_port
-                    seen = ""
-                    last_seen_line = "stale provisioning prompt ignored"
+                    print("Provisioning window detected.", file=sys.stderr)
+                    return fd, active_port
 
         now = time.monotonic()
         if now >= next_notice and notice_count < 2:
@@ -470,42 +683,6 @@ def relevant_device_lines(text: str) -> list[str]:
     return lines
 
 
-def verify_live_config_receiver(fd: int) -> bool:
-    """Return true when firmware responds to a live provisioning command."""
-    try:
-        write_all(fd, STATUS_REQUEST)
-    except SerialDisconnected:
-        raise
-    except OSError:
-        return False
-
-    start = time.monotonic()
-    seen = ""
-    while time.monotonic() - start < HANDSHAKE_TIMEOUT_SECS:
-        text = read_available(fd)
-        if text:
-            seen += text
-            if firmware_status(seen):
-                return True
-        time.sleep(0.05)
-    return False
-
-
-def firmware_status(text: str) -> bool:
-    """Return true when serial text contains a firmware status response."""
-    for line in text.splitlines():
-        line = line.strip()
-        if not line.startswith("{"):
-            continue
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if event.get("type") == "status":
-            return True
-    return False
-
-
 def firmware_response(text: str) -> tuple[str, str] | None:
     """Return firmware provisioning status from serial text."""
     for line in text.splitlines():
@@ -542,7 +719,6 @@ def open_serial(port: str) -> tuple[int, str]:
 
     try:
         configure_serial(fd)
-        termios.tcflush(fd, termios.TCIOFLUSH)
     except OSError as error:
         os.close(fd)
         if serial_error_is_disconnect(error):
@@ -644,6 +820,33 @@ def known_serial_ports() -> list[str]:
     for pattern in SERIAL_PORT_PATTERNS:
         ports.extend(glob.glob(pattern))
     return sorted(set(ports))
+
+
+def discover_serial_port(wait_secs: float) -> str:
+    """Return the only likely USB serial port, waiting briefly if needed."""
+    start = time.monotonic()
+    printed_wait = False
+    while True:
+        ports = known_serial_ports()
+        if len(ports) == 1:
+            print(f"Serial port: {ports[0]}", file=sys.stderr)
+            return ports[0]
+        if len(ports) > 1:
+            formatted = "\n  ".join(ports)
+            raise SystemExit(
+                "ERROR: multiple USB serial ports found; pass one explicitly:\n"
+                f"  {formatted}"
+            )
+
+        if time.monotonic() - start >= wait_secs:
+            raise SystemExit(
+                "ERROR: no USB serial port found. Plug in the board or hold BOOT while "
+                "connecting USB, then rerun this command."
+            )
+        if not printed_wait:
+            print("Waiting for USB serial port.", file=sys.stderr)
+            printed_wait = True
+        time.sleep(0.25)
 
 
 def resolve_serial_port(requested: str) -> str:

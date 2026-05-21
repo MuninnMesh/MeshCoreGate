@@ -12,7 +12,7 @@ use esp_backtrace as _;
 use esp_hal::main;
 
 #[cfg(feature = "heltec-v4")]
-esp_bootloader_esp_idf::esp_app_desc!();
+mod app_desc;
 
 /// Firmware entrypoint selected by Cargo features.
 #[cfg(feature = "heltec-v4")]

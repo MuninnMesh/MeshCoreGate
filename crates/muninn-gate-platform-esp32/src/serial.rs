@@ -1,5 +1,7 @@
 //! ESP32 serial output helpers.
 
+use core::ptr::addr_of_mut;
+
 use esp_hal::Blocking;
 use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx};
 use heapless::{String, Vec};
@@ -13,6 +15,8 @@ use crate::provisioning::USB_CONFIG_JSON_BYTES;
 pub const SERIAL_JSON_BUFFER_BYTES: usize = 2048;
 /// Scratch bytes read from USB Serial/JTAG in one non-blocking pass.
 pub const USB_READ_CHUNK_BYTES: usize = 64;
+
+static mut USB_JSON_BUFFER: Vec<u8, USB_CONFIG_JSON_BYTES> = Vec::new();
 
 /// Write one line to the ESP serial console.
 pub fn write_line(message: &str)
@@ -48,7 +52,7 @@ pub fn write_snapshot_json(
 pub struct UsbJsonReceiver
 {
     rx:            UsbSerialJtagRx<'static, Blocking>,
-    buffer:        Vec<u8, USB_CONFIG_JSON_BYTES>,
+    buffer:        &'static mut Vec<u8, USB_CONFIG_JSON_BYTES>,
     activity:      bool,
     depth:         u16,
     started:       bool,
@@ -64,9 +68,11 @@ impl UsbJsonReceiver
     pub fn new(serial: UsbSerialJtag<'static, Blocking>) -> Self
     {
         let (rx, _tx) = serial.split();
+        let buffer = unsafe { &mut *addr_of_mut!(USB_JSON_BUFFER) };
+        buffer.clear();
         Self {
             rx,
-            buffer: Vec::new(),
+            buffer,
             activity: false,
             depth: 0,
             started: false,
@@ -179,13 +185,14 @@ impl UsbJsonReceiver
 
     fn complete_document(&mut self) -> Result<String<USB_CONFIG_JSON_BYTES>, Error>
     {
-        let bytes = core::mem::take(&mut self.buffer);
-        self.reset_state();
-        let text = core::str::from_utf8(bytes.as_slice()).map_err(|_| Error::InvalidConfig)?;
+        let text =
+            core::str::from_utf8(self.buffer.as_slice()).map_err(|_| Error::InvalidConfig)?;
         let mut document = String::new();
         document
             .push_str(text)
             .map_err(|_| Error::RenderBufferFull)?;
+        self.reset_state();
+        self.buffer.clear();
         Ok(document)
     }
 

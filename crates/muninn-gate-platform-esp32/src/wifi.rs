@@ -29,6 +29,7 @@ use core::cmp::min;
 use core::fmt;
 
 use esp_hal::delay::Delay;
+use esp_wifi::wifi::event::{EventExt as _, StaDisconnected};
 use esp_wifi::wifi::{AuthMethod, ClientConfiguration, Configuration, WifiDevice};
 use muninn_gate_core::config::MAX_TELEMETRY_PRODUCERS;
 use muninn_gate_core::{
@@ -61,13 +62,6 @@ use crate::platform::Esp32Platform;
 use crate::scheduler::GatewayScheduler;
 use crate::{diagnostics, http_metrics, report_state, serial};
 
-unsafe extern "C" {
-    fn esp_wifi_set_storage(storage: u32) -> i32;
-}
-
-/// ESP-IDF WiFi storage mode that keeps station config in RAM.
-const WIFI_STORAGE_RAM: u32 = 1;
-
 /// HTTP request receive buffer size.
 pub const HTTP_REQUEST_BUFFER_BYTES: usize = 1024;
 /// TCP receive buffer size for the HTTP socket.
@@ -76,8 +70,10 @@ pub const HTTP_TCP_RX_BUFFER_BYTES: usize = 2048;
 pub const HTTP_TCP_TX_BUFFER_BYTES: usize = 6144;
 /// Number of 250 ms connection checks before WiFi startup fails.
 pub const WIFI_CONNECT_ATTEMPTS: usize = 80;
-/// Number of 250 ms DHCP checks before the firmware reports a network error.
-pub const DHCP_ATTEMPTS: usize = 120;
+/// Number of 250 ms DHCP checks before forcing WiFi association again.
+pub const DHCP_ATTEMPTS: usize = 240;
+/// Number of 250 ms DHCP checks between progress logs.
+pub const DHCP_PROGRESS_POLLS: usize = 32;
 /// Number of empty network polls allowed while sending one response.
 pub const HTTP_SEND_IDLE_POLLS: usize = 2_000;
 /// Number of 1 ms polls allowed while waiting for a response to drain.
@@ -101,8 +97,6 @@ pub enum WifiStartError
     Allocation,
     /// The station did not connect to the configured AP in time.
     ConnectTimeout,
-    /// DHCP did not provide an IPv4 lease in time.
-    DhcpTimeout,
     /// The TCP listener could not bind to the configured port.
     HttpListen,
     /// HTTP response rendering failed.
@@ -123,7 +117,6 @@ impl WifiStartError
             Self::Controller => "wifi controller failed",
             Self::Allocation => "wifi allocation failed",
             Self::ConnectTimeout => "wifi connect timeout",
-            Self::DhcpTimeout => "dhcp timeout",
             Self::HttpListen => "http listen failed",
             Self::HttpRender => "http render failed",
             Self::HttpSend => "http send failed",
@@ -140,8 +133,7 @@ impl WifiStartError
             | Self::DriverInit
             | Self::Controller
             | Self::Allocation
-            | Self::ConnectTimeout
-            | Self::DhcpTimeout => DiagnosticSubsystem::Wifi,
+            | Self::ConnectTimeout => DiagnosticSubsystem::Wifi,
         }
     }
 
@@ -155,7 +147,6 @@ impl WifiStartError
             Self::Controller => "CHECK WIFI CONFIG",
             Self::Allocation => "LOW MEMORY",
             Self::ConnectTimeout => "CHECK SSID/PASS",
-            Self::DhcpTimeout => "NO IP ADDRESS",
             Self::HttpListen => "HTTP LISTEN FAIL",
             Self::HttpRender => "HTTP RENDER FAIL",
             Self::HttpSend => "HTTP SEND FAIL",
@@ -226,6 +217,7 @@ where
         let _ = display.show_wifi_connecting(ssid, "Starting WiFi", 1);
     }
 
+    install_wifi_event_logging();
     let station_config = station_config(config)?;
 
     let resources = platform
@@ -244,8 +236,6 @@ where
         WifiStartError::Controller
     })?;
     let delay = Delay::new();
-
-    use_ram_wifi_storage()?;
 
     if let Err(error) = controller.set_configuration(&Configuration::Client(station_config)) {
         esp_println::println!("WiFi: set_configuration failed: {:?}", error);
@@ -283,7 +273,11 @@ where
     let mut tcp_tx_buffer = [0_u8; HTTP_TCP_TX_BUFFER_BYTES];
     let mut socket_storage = [SocketStorage::EMPTY, SocketStorage::EMPTY];
     let mut sockets = SocketSet::new(&mut socket_storage[..]);
-    let dhcp_handle = sockets.add(dhcpv4::Socket::new());
+    let mut dhcp_socket = dhcpv4::Socket::new();
+    let mut retry_config = dhcp_socket.get_retry_config();
+    retry_config.discover_timeout = SmoltcpDuration::from_secs(2);
+    dhcp_socket.set_retry_config(retry_config);
+    let dhcp_handle = sockets.add(dhcp_socket);
     let tcp_rx = tcp::SocketBuffer::new(&mut tcp_rx_buffer[..]);
     let tcp_tx = tcp::SocketBuffer::new(&mut tcp_tx_buffer[..]);
     let mut tcp_socket = tcp::Socket::new(tcp_rx, tcp_tx);
@@ -410,8 +404,25 @@ where
             if let Some(display) = display.as_deref_mut() {
                 let _ = display.show_wifi_connecting(ssid, "Getting IP", dhcp_polls as u8);
             }
+            if dhcp_polls % DHCP_PROGRESS_POLLS == 0 {
+                esp_println::println!("Network: still waiting for DHCP ({}s)", dhcp_polls / 4);
+            }
             if dhcp_polls > DHCP_ATTEMPTS {
-                return Err(WifiStartError::DhcpTimeout);
+                serial::write_line("Network: DHCP timeout; reconnecting WiFi");
+                record_diagnostic(
+                    platform.now_ms(),
+                    DiagnosticLevel::Warn,
+                    DiagnosticSubsystem::Wifi,
+                    "dhcp_timeout",
+                    "DHCP timed out; reconnecting WiFi",
+                );
+                let _ = controller.disconnect();
+                clear_network_config(&mut interface, &mut sockets, dhcp_handle);
+                wifi_connected = false;
+                endpoint = None;
+                dhcp_polls = 0;
+                delay.delay_millis(1_000);
+                continue;
             }
             delay.delay_millis(250);
             continue;
@@ -593,14 +604,40 @@ fn wait_for_wifi_started(
     Err(WifiStartError::Controller)
 }
 
-fn use_ram_wifi_storage() -> Result<(), WifiStartError>
+fn install_wifi_event_logging()
 {
-    let result = unsafe { esp_wifi_set_storage(WIFI_STORAGE_RAM) };
-    if result != 0 {
-        esp_println::println!("WiFi: esp_wifi_set_storage(RAM) failed: {}", result);
-        return Err(WifiStartError::Controller);
+    StaDisconnected::update_handler(|event| {
+        let reason = event.0.reason;
+        esp_println::println!(
+            "WiFi: disconnected reason={} ({})",
+            reason,
+            wifi_disconnect_reason(reason)
+        );
+    });
+}
+
+fn wifi_disconnect_reason(code: u8) -> &'static str
+{
+    match code {
+        2 => "AUTH_EXPIRE",
+        4 => "ASSOC_EXPIRE",
+        14 => "MIC_FAILURE",
+        15 => "4WAY_HANDSHAKE_TIMEOUT",
+        16 => "GROUP_KEY_UPDATE_TIMEOUT",
+        17 => "IE_IN_4WAY_DIFFERS",
+        19 => "PAIRWISE_CIPHER_INVALID",
+        20 => "AKMP_INVALID",
+        23 => "802_1X_AUTH_FAILED",
+        200 => "BEACON_TIMEOUT",
+        201 => "NO_AP_FOUND",
+        202 => "AUTH_FAIL",
+        203 => "ASSOC_FAIL",
+        204 => "HANDSHAKE_TIMEOUT",
+        205 => "CONNECTION_FAIL",
+        210 => "NO_AP_FOUND_COMPATIBLE_SECURITY",
+        211 => "NO_AP_FOUND_IN_AUTHMODE_THRESHOLD",
+        _ => "OTHER",
     }
-    Ok(())
 }
 
 fn network_interface(device: &mut WifiDevice<'_>, platform: &Esp32Platform) -> Interface

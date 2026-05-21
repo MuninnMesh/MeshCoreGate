@@ -8,8 +8,6 @@
 
 extern crate alloc;
 
-use alloc::boxed::Box;
-
 /// ESP32 runtime USB configuration updates.
 pub mod config_update;
 /// ESP32 diagnostic event retention.
@@ -83,7 +81,9 @@ pub trait Esp32BoardVariant: GateFirmwareVariant
 /// Idle time before an incomplete USB config upload is rejected.
 pub const USB_CONFIG_UPLOAD_IDLE_TIMEOUT_MS: u64 = 2_000;
 /// Boot-time window for replacing saved config before WiFi starts.
-pub const USB_CONFIG_UPDATE_WINDOW_MS: u64 = 15_000;
+pub const USB_CONFIG_UPDATE_WINDOW_MS: u64 = 5_000;
+/// Interval between provisioning-ready markers while the USB window is open.
+pub const USB_CONFIG_READY_INTERVAL_MS: u64 = 1_000;
 
 /// Run common ESP32 gateway startup for a concrete board variant.
 pub fn run_gateway<V>() -> !
@@ -546,15 +546,18 @@ fn run_usb_config_update_window<V>(
         return;
     };
 
-    serial::write_line(r#"{"type":"ready","request":"set_config"}"#);
-    let mut service = Box::new(UsbConfigUpdateService::new(serial::UsbJsonReceiver::new(
-        usb_serial,
-    )));
+    let mut service = UsbConfigUpdateService::new(serial::UsbJsonReceiver::new(usb_serial));
     let start_ms = platform.now_ms();
+    let mut last_ready_ms = start_ms.saturating_sub(USB_CONFIG_READY_INTERVAL_MS);
     let delay = Delay::new();
     let mut display = display;
 
     while platform.now_ms().saturating_sub(start_ms) < USB_CONFIG_UPDATE_WINDOW_MS {
+        let now_ms = platform.now_ms();
+        if now_ms.saturating_sub(last_ready_ms) >= USB_CONFIG_READY_INTERVAL_MS {
+            write_config_ready();
+            last_ready_ms = now_ms;
+        }
         service.poll::<V>(platform, display.as_deref_mut());
         if service.reboot_required() {
             delay.delay_millis(1_000);
@@ -572,7 +575,6 @@ where
     V: GateFirmwareVariant,
 {
     report_state(GatewayRuntimeState::Unprovisioned);
-    serial::write_line(r#"{"type":"ready","request":"set_config"}"#);
     if let Some(display) = display.as_deref_mut() {
         let _ = display.show_unprovisioned();
     }
@@ -597,9 +599,11 @@ where
         }
     };
 
-    let mut receiver = Box::new(serial::UsbJsonReceiver::new(usb_serial));
+    let mut receiver = serial::UsbJsonReceiver::new(usb_serial);
+    write_config_ready();
     let mut last_activity_ms = None;
     let mut last_displayed_bytes = 0_usize;
+    let mut last_ready_ms = platform.now_ms();
     let delay = Delay::new();
 
     loop {
@@ -695,6 +699,13 @@ where
                 }
             },
         }
+        let now_ms = platform.now_ms();
+        if receiver.buffered_bytes() == 0
+            && now_ms.saturating_sub(last_ready_ms) >= USB_CONFIG_READY_INTERVAL_MS
+        {
+            write_config_ready();
+            last_ready_ms = now_ms;
+        }
         delay.delay_millis(1);
     }
 }
@@ -717,8 +728,20 @@ where
                 return Err(ProvisioningError::InvalidConfig);
             }
             serial::write_line(r#"{"type":"progress","request":"set_config","stage":"saving"}"#);
-            storage::save_config_document(document, &config)
-                .map_err(|_| ProvisioningError::InvalidConfig)?;
+            if let Err(error) = storage::save_config_document(document, &config) {
+                write_storage_error(error);
+                record_diagnostic(
+                    platform.now_ms(),
+                    DiagnosticLevel::Error,
+                    DiagnosticSubsystem::Config,
+                    "config_storage_failed",
+                    error.as_code(),
+                );
+                if let Some(display) = display {
+                    let _ = display.show_config_error(error.as_code());
+                }
+                return Ok(None);
+            }
             serial::write_line(r#"{"type":"ok","request":"set_config"}"#);
             record_diagnostic(
                 platform.now_ms(),
@@ -730,7 +753,7 @@ where
             if let Some(display) = display {
                 let _ = display.show_config_accepted();
             }
-            Ok(Some(*config))
+            Ok(Some(config.as_ref().clone()))
         },
         ProvisioningCommand::Help => {
             write_provisioning_help();
@@ -755,12 +778,33 @@ fn write_provisioning_help()
     serial::write_line("upload raw config JSON or JSONC to provision the gateway");
 }
 
+fn write_config_ready()
+{
+    serial::write_line(r#"{"type":"ready","request":"set_config"}"#);
+}
+
 fn write_provisioning_error(error: ProvisioningError)
 {
     esp_println::println!(
         r#"{{"type":"error","request":"set_config","code":"{}"}}"#,
         error.as_str(),
     );
+}
+
+fn write_storage_error(error: storage::StorageError)
+{
+    if let Some(rom_code) = error.rom_code() {
+        esp_println::println!(
+            r#"{{"type":"error","request":"set_config","code":"{}","rom_code":{}}}"#,
+            error.as_code(),
+            rom_code,
+        );
+    } else {
+        esp_println::println!(
+            r#"{{"type":"error","request":"set_config","code":"{}"}}"#,
+            error.as_code(),
+        );
+    }
 }
 
 fn reboot_device() -> !

@@ -25,12 +25,11 @@ embassy-sync = "0.6.2"
 embassy-time = { version = "0.4.0", default-features = false }
 esp-alloc = "0.8.0"
 esp-backtrace = "0.18.1"
-esp-bootloader-esp-idf = "0.4.0"
 esp-hal = "=1.0.0-rc.0"
 esp-hal-embassy = "0.9.1"
 esp-println = { version = "0.16.1", default-features = false }
 esp-rom-sys = "0.1.4"
-esp-wifi = "0.15.1"
+esp-wifi = { version = "0.15.1", default-features = false }
 heapless = "0.8.0"
 hmac = { version = "0.13.0", default-features = false }
 log = "0.4.28"
@@ -40,6 +39,7 @@ serde_json = { version = "1.0.149", default-features = false }
 sha2 = { version = "0.11.0", default-features = false }
 smoltcp = { version = "0.12.0", default-features = false }
 ssd1306 = "0.10.0"
+static_cell = "2.1.1"
 
 muninn-gate-board-heltec-v4 = { path = "crates/muninn-gate-board-heltec-v4" }
 muninn-gate-core = { path = "crates/muninn-gate-core" }

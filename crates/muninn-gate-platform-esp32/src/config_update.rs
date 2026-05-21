@@ -134,9 +134,12 @@ impl UsbConfigUpdateService
                 serial::write_line(
                     r#"{"type":"progress","request":"set_config","stage":"saving"}"#,
                 );
-                if storage::save_config_document(document, &config).is_err() {
-                    self.reject_upload(platform, display.take(), ProvisioningError::InvalidConfig);
-                    return;
+                match storage::save_config_document(document, &config) {
+                    Ok(()) => {},
+                    Err(error) => {
+                        self.reject_storage_upload(platform, display.take(), error);
+                        return;
+                    },
                 }
 
                 self.reboot_required = true;
@@ -185,6 +188,37 @@ impl UsbConfigUpdateService
         );
         if let Some(display) = display {
             let _ = display.show_config_error(error.as_str());
+        }
+    }
+
+    fn reject_storage_upload(
+        &mut self,
+        platform: &Esp32Platform,
+        display: Option<&mut LocalDisplay>,
+        error: storage::StorageError,
+    )
+    {
+        if let Some(rom_code) = error.rom_code() {
+            esp_println::println!(
+                r#"{{"type":"error","request":"set_config","code":"{}","rom_code":{}}}"#,
+                error.as_code(),
+                rom_code,
+            );
+        } else {
+            esp_println::println!(
+                r#"{{"type":"error","request":"set_config","code":"{}"}}"#,
+                error.as_code(),
+            );
+        }
+        record_diagnostic(
+            platform.now_ms(),
+            DiagnosticLevel::Error,
+            DiagnosticSubsystem::Config,
+            "config_update_storage_failed",
+            error.as_code(),
+        );
+        if let Some(display) = display {
+            let _ = display.show_config_error(error.as_code());
         }
     }
 }

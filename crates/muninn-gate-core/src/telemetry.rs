@@ -6,7 +6,7 @@ use crate::config::{GatewayConfig, MAX_TELEMETRY_PRODUCERS};
 use crate::{Error, TelemetryProducerConfig, TelemetryProducerId, TelemetryStore};
 
 /// Maximum retained MeshCore/LPP telemetry channels per producer.
-pub const MAX_TELEMETRY_CHANNELS: usize = 8;
+pub const MAX_TELEMETRY_CHANNELS: usize = 1;
 /// Cayenne LPP temperature data type.
 pub const LPP_TEMPERATURE: u8 = 103;
 /// Cayenne LPP relative humidity data type.

@@ -1,0 +1,4 @@
+# Name,      Type, SubType, Offset,   Size,     Flags
+phy_init,    data, phy,     0x9000,   0x1000,
+factory,     app,  factory, 0x10000,  0xf80000,
+muninn_cfg,  data, fat,     0xf90000, 0x2000,
