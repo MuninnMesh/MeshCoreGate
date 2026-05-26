@@ -6,7 +6,11 @@ use crate::config::{GatewayConfig, MAX_TELEMETRY_PRODUCERS};
 use crate::{Error, TelemetryProducerConfig, TelemetryProducerId, TelemetryStore};
 
 /// Maximum retained MeshCore/LPP telemetry channels per producer.
-pub const MAX_TELEMETRY_CHANNELS: usize = 1;
+pub const MAX_TELEMETRY_CHANNELS: usize = 6;
+/// MeshCore self-device LPP channel.
+pub const MESHCORE_SELF_CHANNEL: u8 = 1;
+/// Cayenne LPP analog input data type.
+pub const LPP_ANALOG_INPUT: u8 = 2;
 /// Cayenne LPP temperature data type.
 pub const LPP_TEMPERATURE: u8 = 103;
 /// Cayenne LPP relative humidity data type.
@@ -15,90 +19,59 @@ pub const LPP_RELATIVE_HUMIDITY: u8 = 104;
 pub const LPP_BAROMETRIC_PRESSURE: u8 = 115;
 /// Cayenne LPP voltage data type.
 pub const LPP_VOLTAGE: u8 = 116;
-/// Cayenne LPP GPS data type.
-pub const LPP_GPS: u8 = 136;
+/// Cayenne LPP current data type.
+pub const LPP_CURRENT: u8 = 117;
+/// Cayenne LPP percentage data type.
+pub const LPP_PERCENTAGE: u8 = 120;
+/// Cayenne LPP power data type.
+pub const LPP_POWER: u8 = 128;
+
+const LPP_DIGITAL_INPUT: u8 = 0;
+const LPP_DIGITAL_OUTPUT: u8 = 1;
+const LPP_ANALOG_OUTPUT: u8 = 3;
+const LPP_GENERIC_SENSOR: u8 = 100;
+const LPP_LUMINOSITY: u8 = 101;
+const LPP_PRESENCE: u8 = 102;
+const LPP_ACCELEROMETER: u8 = 113;
+const LPP_FREQUENCY: u8 = 118;
+const LPP_ALTITUDE: u8 = 121;
+const LPP_CONCENTRATION: u8 = 125;
+const LPP_DISTANCE: u8 = 130;
+const LPP_ENERGY: u8 = 131;
+const LPP_DIRECTION: u8 = 132;
+const LPP_UNIXTIME: u8 = 133;
+const LPP_GYROMETER: u8 = 134;
+const LPP_COLOUR: u8 = 135;
+const LPP_GPS: u8 = 136;
+const LPP_SWITCH: u8 = 142;
 
 /// Reusable sensor metrics reported by a producer or one producer channel.
 ///
-/// This is a practical superset for the sensor families Muninn Gate expects to
-/// bridge: BME680/BME688, BMP280, SHT3x/SHT4x, GPS receivers, common IMUs, and
-/// INA219/INA228/INA3221 power monitors. Fields stay optional because a given
-/// producer usually reports only a small subset.
+/// This intentionally tracks only the MeshCore sensor fields Muninn Gate
+/// currently bridges: MCU battery/temperature, SHT4x temperature/humidity,
+/// BME680 temperature/humidity/pressure/gas, and INA3221 voltage/current/power.
+/// Fields stay optional because a given channel reports only a small subset.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct TelemetryMetrics
 {
     /// Battery voltage in volts.
-    pub battery_voltage:        Option<f32>,
+    pub battery_voltage:     Option<f32>,
     /// Battery charge percentage.
-    pub battery_percent:        Option<f32>,
+    pub battery_percent:     Option<f32>,
     /// Generic voltage in volts when the value is not specifically battery or bus voltage.
-    pub voltage:                Option<f32>,
-    /// Power-monitor bus voltage in volts.
-    pub bus_voltage:            Option<f32>,
-    /// Power-monitor shunt voltage in volts.
-    pub shunt_voltage:          Option<f32>,
+    pub voltage:             Option<f32>,
     /// Current in amperes.
-    pub current_amps:           Option<f32>,
+    pub current_amps:        Option<f32>,
     /// Power in watts.
-    pub power_watts:            Option<f32>,
-    /// Accumulated energy in joules.
-    pub energy_joules:          Option<f32>,
-    /// Accumulated charge in coulombs.
-    pub charge_coulombs:        Option<f32>,
+    pub power_watts:         Option<f32>,
     /// Temperature in Celsius.
-    pub temperature_celsius:    Option<f32>,
+    pub temperature_celsius: Option<f32>,
     /// Relative humidity percentage.
-    pub humidity_percent:       Option<f32>,
+    pub humidity_percent:    Option<f32>,
     /// Pressure in pascals.
-    pub pressure_pa:            Option<f32>,
+    pub pressure_pa:         Option<f32>,
     /// Gas sensor resistance in ohms.
-    pub gas_resistance_ohms:    Option<f32>,
-    /// Air-quality index value from a producer-side algorithm.
-    pub iaq_index:              Option<f32>,
-    /// Equivalent CO2 in parts per million from a producer-side algorithm.
-    pub co2_equivalent_ppm:     Option<f32>,
-    /// Total volatile organic compounds in parts per billion.
-    pub tvoc_ppb:               Option<f32>,
-    /// Latitude in decimal degrees.
-    pub latitude_degrees:       Option<f32>,
-    /// Longitude in decimal degrees.
-    pub longitude_degrees:      Option<f32>,
-    /// Altitude in meters.
-    pub altitude_meters:        Option<f32>,
-    /// Ground speed in meters per second.
-    pub speed_mps:              Option<f32>,
-    /// Heading or course over ground in degrees.
-    pub heading_degrees:        Option<f32>,
-    /// Horizontal dilution of precision.
-    pub hdop:                   Option<f32>,
-    /// Number of satellites used or visible for the reported fix.
-    pub satellites:             Option<u8>,
-    /// Producer-defined GPS fix quality/type.
-    pub gps_fix:                Option<u8>,
-    /// Acceleration on the X axis in meters per second squared.
-    pub acceleration_x_mps2:    Option<f32>,
-    /// Acceleration on the Y axis in meters per second squared.
-    pub acceleration_y_mps2:    Option<f32>,
-    /// Acceleration on the Z axis in meters per second squared.
-    pub acceleration_z_mps2:    Option<f32>,
-    /// Angular velocity on the X axis in degrees per second.
-    pub angular_velocity_x_dps: Option<f32>,
-    /// Angular velocity on the Y axis in degrees per second.
-    pub angular_velocity_y_dps: Option<f32>,
-    /// Angular velocity on the Z axis in degrees per second.
-    pub angular_velocity_z_dps: Option<f32>,
-    /// Magnetic field on the X axis in microtesla.
-    pub magnetic_field_x_ut:    Option<f32>,
-    /// Magnetic field on the Y axis in microtesla.
-    pub magnetic_field_y_ut:    Option<f32>,
-    /// Magnetic field on the Z axis in microtesla.
-    pub magnetic_field_z_ut:    Option<f32>,
-    /// Roll angle in degrees.
-    pub roll_degrees:           Option<f32>,
-    /// Pitch angle in degrees.
-    pub pitch_degrees:          Option<f32>,
-    /// Yaw angle in degrees.
-    pub yaw_degrees:            Option<f32>,
+    pub gas_resistance_ohms: Option<f32>,
 }
 
 /// Last-known values for one MeshCore/LPP telemetry channel.
@@ -129,42 +102,15 @@ impl TelemetryMetrics
     pub const fn new() -> Self
     {
         Self {
-            battery_voltage:        None,
-            battery_percent:        None,
-            voltage:                None,
-            bus_voltage:            None,
-            shunt_voltage:          None,
-            current_amps:           None,
-            power_watts:            None,
-            energy_joules:          None,
-            charge_coulombs:        None,
-            temperature_celsius:    None,
-            humidity_percent:       None,
-            pressure_pa:            None,
-            gas_resistance_ohms:    None,
-            iaq_index:              None,
-            co2_equivalent_ppm:     None,
-            tvoc_ppb:               None,
-            latitude_degrees:       None,
-            longitude_degrees:      None,
-            altitude_meters:        None,
-            speed_mps:              None,
-            heading_degrees:        None,
-            hdop:                   None,
-            satellites:             None,
-            gps_fix:                None,
-            acceleration_x_mps2:    None,
-            acceleration_y_mps2:    None,
-            acceleration_z_mps2:    None,
-            angular_velocity_x_dps: None,
-            angular_velocity_y_dps: None,
-            angular_velocity_z_dps: None,
-            magnetic_field_x_ut:    None,
-            magnetic_field_y_ut:    None,
-            magnetic_field_z_ut:    None,
-            roll_degrees:           None,
-            pitch_degrees:          None,
-            yaw_degrees:            None,
+            battery_voltage:     None,
+            battery_percent:     None,
+            voltage:             None,
+            current_amps:        None,
+            power_watts:         None,
+            temperature_celsius: None,
+            humidity_percent:    None,
+            pressure_pa:         None,
+            gas_resistance_ohms: None,
         }
     }
 }
@@ -273,6 +219,45 @@ impl ProducerTelemetry
         })
     }
 
+    /// Store a channel voltage and update the producer default value.
+    pub fn set_channel_voltage(&mut self, channel_id: u8, value: f32) -> Result<(), Error>
+    {
+        if self.metrics.voltage.is_none() {
+            self.metrics.voltage = Some(value);
+        }
+        if channel_id == MESHCORE_SELF_CHANNEL && self.metrics.battery_voltage.is_none() {
+            self.metrics.battery_voltage = Some(value);
+        }
+        self.update_channel(channel_id, |channel| {
+            channel.metrics.voltage = Some(value);
+            if channel_id == MESHCORE_SELF_CHANNEL {
+                channel.metrics.battery_voltage = Some(value);
+            }
+        })
+    }
+
+    /// Store a channel current and update the producer default value.
+    pub fn set_channel_current(&mut self, channel_id: u8, value: f32) -> Result<(), Error>
+    {
+        if self.metrics.current_amps.is_none() {
+            self.metrics.current_amps = Some(value);
+        }
+        self.update_channel(channel_id, |channel| {
+            channel.metrics.current_amps = Some(value);
+        })
+    }
+
+    /// Store a channel power value and update the producer default value.
+    pub fn set_channel_power(&mut self, channel_id: u8, value: f32) -> Result<(), Error>
+    {
+        if self.metrics.power_watts.is_none() {
+            self.metrics.power_watts = Some(value);
+        }
+        self.update_channel(channel_id, |channel| {
+            channel.metrics.power_watts = Some(value);
+        })
+    }
+
     /// Store a channel temperature and update the producer default value.
     pub fn set_channel_temperature(&mut self, channel_id: u8, value: f32) -> Result<(), Error>
     {
@@ -306,24 +291,14 @@ impl ProducerTelemetry
         })
     }
 
-    /// Store channel GPS position and update the producer default value.
-    pub fn set_channel_gps(
-        &mut self,
-        channel_id: u8,
-        latitude_degrees: f32,
-        longitude_degrees: f32,
-        altitude_meters: f32,
-    ) -> Result<(), Error>
+    /// Store a channel gas resistance and update the producer default value.
+    pub fn set_channel_gas_resistance(&mut self, channel_id: u8, value: f32) -> Result<(), Error>
     {
-        if self.metrics.latitude_degrees.is_none() {
-            self.metrics.latitude_degrees = Some(latitude_degrees);
-            self.metrics.longitude_degrees = Some(longitude_degrees);
-            self.metrics.altitude_meters = Some(altitude_meters);
+        if self.metrics.gas_resistance_ohms.is_none() {
+            self.metrics.gas_resistance_ohms = Some(value);
         }
         self.update_channel(channel_id, |channel| {
-            channel.metrics.latitude_degrees = Some(latitude_degrees);
-            channel.metrics.longitude_degrees = Some(longitude_degrees);
-            channel.metrics.altitude_meters = Some(altitude_meters);
+            channel.metrics.gas_resistance_ohms = Some(value);
         })
     }
 }
@@ -338,6 +313,11 @@ pub fn decode_lpp_payload(telemetry: &mut ProducerTelemetry, payload: &[u8])
         index = index.saturating_add(2);
 
         match data_type {
+            LPP_ANALOG_INPUT if index.saturating_add(2) <= payload.len() => {
+                let value = i16::from_be_bytes([payload[index], payload[index + 1]]);
+                let _ = telemetry.set_channel_gas_resistance(channel_id, value as f32 / 100.0);
+                index = index.saturating_add(2);
+            },
             LPP_TEMPERATURE if index.saturating_add(2) <= payload.len() => {
                 let value = i16::from_be_bytes([payload[index], payload[index + 1]]);
                 let _ = telemetry.set_channel_temperature(channel_id, value as f32 / 10.0);
@@ -354,34 +334,61 @@ pub fn decode_lpp_payload(telemetry: &mut ProducerTelemetry, payload: &[u8])
             },
             LPP_VOLTAGE if index.saturating_add(2) <= payload.len() => {
                 let value = u16::from_be_bytes([payload[index], payload[index + 1]]);
-                let _ = telemetry.set_channel_battery_voltage(channel_id, value as f32 / 100.0);
+                let _ = telemetry.set_channel_voltage(channel_id, value as f32 / 100.0);
                 index = index.saturating_add(2);
             },
-            LPP_GPS if index.saturating_add(9) <= payload.len() => {
-                let latitude = signed_24([payload[index], payload[index + 1], payload[index + 2]])
-                    as f32
-                    / 10_000.0;
-                let longitude =
-                    signed_24([payload[index + 3], payload[index + 4], payload[index + 5]]) as f32
-                        / 10_000.0;
-                let altitude =
-                    signed_24([payload[index + 6], payload[index + 7], payload[index + 8]]) as f32
-                        / 100.0;
-                let _ = telemetry.set_channel_gps(channel_id, latitude, longitude, altitude);
-                index = index.saturating_add(9);
+            LPP_CURRENT if index.saturating_add(2) <= payload.len() => {
+                let value = i16::from_be_bytes([payload[index], payload[index + 1]]);
+                let _ = telemetry.set_channel_current(channel_id, value as f32 / 1000.0);
+                index = index.saturating_add(2);
             },
-            _ => break,
+            LPP_PERCENTAGE if index < payload.len() => {
+                if channel_id == MESHCORE_SELF_CHANNEL {
+                    let _ =
+                        telemetry.set_channel_battery_percent(channel_id, payload[index] as f32);
+                }
+                index = index.saturating_add(1);
+            },
+            LPP_POWER if index.saturating_add(2) <= payload.len() => {
+                let value = u16::from_be_bytes([payload[index], payload[index + 1]]);
+                let _ = telemetry.set_channel_power(channel_id, value as f32);
+                index = index.saturating_add(2);
+            },
+            _ => {
+                let Some(length) = lpp_value_length(data_type) else {
+                    break;
+                };
+                if index.saturating_add(length) > payload.len() {
+                    break;
+                }
+                index = index.saturating_add(length);
+            },
         }
     }
 }
 
-fn signed_24(bytes: [u8; 3]) -> i32
+fn lpp_value_length(data_type: u8) -> Option<usize>
 {
-    let value = i32::from_be_bytes([0, bytes[0], bytes[1], bytes[2]]);
-    if value & 0x0080_0000 == 0 {
-        value
-    } else {
-        value | !0x00ff_ffff
+    match data_type {
+        LPP_DIGITAL_INPUT | LPP_DIGITAL_OUTPUT | LPP_PRESENCE | LPP_PERCENTAGE | LPP_SWITCH => {
+            Some(1)
+        },
+        LPP_ANALOG_INPUT
+        | LPP_ANALOG_OUTPUT
+        | LPP_LUMINOSITY
+        | LPP_TEMPERATURE
+        | LPP_CONCENTRATION
+        | LPP_BAROMETRIC_PRESSURE
+        | LPP_VOLTAGE
+        | LPP_CURRENT
+        | LPP_ALTITUDE
+        | LPP_DIRECTION
+        | LPP_POWER => Some(2),
+        LPP_COLOUR => Some(3),
+        LPP_GENERIC_SENSOR | LPP_FREQUENCY | LPP_DISTANCE | LPP_ENERGY | LPP_UNIXTIME => Some(4),
+        LPP_ACCELEROMETER | LPP_GYROMETER => Some(6),
+        LPP_GPS => Some(9),
+        _ => None,
     }
 }
 
@@ -801,4 +808,95 @@ fn success_rate_per_mille(success_total: u64, failure_total: u64) -> Option<u16>
             .saturating_mul(1000)
             .saturating_div(attempt_total) as u16,
     )
+}
+
+#[cfg(test)]
+mod tests
+{
+    use super::*;
+
+    #[test]
+    fn decodes_six_environment_and_power_channels()
+    {
+        let mut payload = std::vec::Vec::new();
+        push_i16(&mut payload, 1, LPP_TEMPERATURE, 234);
+        push_u16(&mut payload, 1, LPP_VOLTAGE, 408);
+        push_u8(&mut payload, 1, LPP_PERCENTAGE, 87);
+        push_i16(&mut payload, 2, LPP_TEMPERATURE, 211);
+        push_u8(&mut payload, 2, LPP_RELATIVE_HUMIDITY, 97);
+        push_i16(&mut payload, 3, LPP_TEMPERATURE, 222);
+        push_u8(&mut payload, 3, LPP_RELATIVE_HUMIDITY, 98);
+        push_u16(&mut payload, 3, LPP_BAROMETRIC_PRESSURE, 10_133);
+        push_i16(&mut payload, 3, LPP_ALTITUDE, 157);
+        push_i16(&mut payload, 3, LPP_ANALOG_INPUT, 12_345);
+        push_u16(&mut payload, 4, LPP_VOLTAGE, 1_201);
+        push_i16(&mut payload, 4, LPP_CURRENT, -1_234);
+        push_u16(&mut payload, 4, LPP_POWER, 15);
+        push_u16(&mut payload, 5, LPP_VOLTAGE, 502);
+        push_i16(&mut payload, 5, LPP_CURRENT, 456);
+        push_u16(&mut payload, 5, LPP_POWER, 2);
+        push_u16(&mut payload, 6, LPP_VOLTAGE, 330);
+        push_i16(&mut payload, 6, LPP_CURRENT, 123);
+        push_u16(&mut payload, 6, LPP_POWER, 1);
+
+        let producer_id = TelemetryProducerId::from_public_key("producer-public-key");
+        let mut telemetry = ProducerTelemetry::new(producer_id, 42);
+        decode_lpp_payload(&mut telemetry, &payload);
+
+        assert_eq!(telemetry.channels().count(), 6);
+        assert_f32_eq(telemetry.metrics.battery_voltage, 4.08);
+        assert_f32_eq(telemetry.metrics.battery_percent, 87.0);
+        assert_f32_eq(telemetry.metrics.voltage, 4.08);
+        assert_f32_eq(telemetry.metrics.current_amps, -1.234);
+        assert_f32_eq(telemetry.metrics.power_watts, 15.0);
+        assert_f32_eq(telemetry.metrics.gas_resistance_ohms, 123.45);
+
+        let mcu = telemetry.channel(1).unwrap().metrics;
+        assert_f32_eq(mcu.temperature_celsius, 23.4);
+        assert_f32_eq(mcu.battery_voltage, 4.08);
+        assert_f32_eq(mcu.battery_percent, 87.0);
+
+        let sht45 = telemetry.channel(2).unwrap().metrics;
+        assert_f32_eq(sht45.temperature_celsius, 21.1);
+        assert_f32_eq(sht45.humidity_percent, 48.5);
+
+        let bme680 = telemetry.channel(3).unwrap().metrics;
+        assert_f32_eq(bme680.temperature_celsius, 22.2);
+        assert_f32_eq(bme680.humidity_percent, 49.0);
+        assert_f32_eq(bme680.pressure_pa, 101_330.0);
+        assert_f32_eq(bme680.gas_resistance_ohms, 123.45);
+
+        let ina3221_channel_1 = telemetry.channel(4).unwrap().metrics;
+        assert_f32_eq(ina3221_channel_1.voltage, 12.01);
+        assert_f32_eq(ina3221_channel_1.current_amps, -1.234);
+        assert_f32_eq(ina3221_channel_1.power_watts, 15.0);
+    }
+
+    fn push_u8(payload: &mut std::vec::Vec<u8>, channel: u8, data_type: u8, value: u8)
+    {
+        payload.extend_from_slice(&[channel, data_type, value]);
+    }
+
+    fn push_i16(payload: &mut std::vec::Vec<u8>, channel: u8, data_type: u8, value: i16)
+    {
+        payload.push(channel);
+        payload.push(data_type);
+        payload.extend_from_slice(&value.to_be_bytes());
+    }
+
+    fn push_u16(payload: &mut std::vec::Vec<u8>, channel: u8, data_type: u8, value: u16)
+    {
+        payload.push(channel);
+        payload.push(data_type);
+        payload.extend_from_slice(&value.to_be_bytes());
+    }
+
+    fn assert_f32_eq(actual: Option<f32>, expected: f32)
+    {
+        let actual = actual.unwrap();
+        assert!(
+            (actual - expected).abs() < 0.001,
+            "expected {expected}, got {actual}"
+        );
+    }
 }

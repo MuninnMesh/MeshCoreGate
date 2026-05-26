@@ -41,12 +41,13 @@ use muninn_mesh_meshcore_lib::{
     decrypt_response,
     login_response_is_success,
     meshcore_payload_body,
+    response_is_login_success,
     telemetry_response_lpp,
 };
 use muninn_mesh_radio::MeshRxFrame;
 
 use crate::display::LocalDisplay;
-use crate::{diagnostics, radio, telemetry_state};
+use crate::{diagnostics, radio, storage, telemetry_state};
 
 /// Login wait budget for MeshCore repeater authentication.
 pub const MESHCORE_LOGIN_TIMEOUT_MS: u64 = 5_000;
@@ -57,9 +58,39 @@ pub const MESHCORE_RESPONSE_WAIT_STEP_MS: u32 = 20;
 /// Minimum interval between OLED poll spinner frames.
 pub const POLL_SPINNER_REFRESH_MS: u64 = 250;
 /// Initial high tag range avoids replay rejection against normal Unix time.
-pub const MESHCORE_REQUEST_TAG_BASE: u32 = 0x9000_0000;
+pub const MESHCORE_REQUEST_TAG_BASE: u32 = 0xf000_0000;
+/// Number of MeshCore request tags reserved per boot in persistent storage.
+pub const MESHCORE_REQUEST_TAG_RESERVE_COUNT: u32 = 0x0000_1000;
 
 static NEXT_REQUEST_TAG: AtomicU32 = AtomicU32::new(MESHCORE_REQUEST_TAG_BASE);
+
+/// Reserve and initialize the MeshCore request-tag range for this boot.
+pub fn initialize_request_tags(now_ms: u64)
+{
+    match storage::reserve_request_tag_seed(
+        MESHCORE_REQUEST_TAG_BASE,
+        MESHCORE_REQUEST_TAG_RESERVE_COUNT,
+    ) {
+        Ok(seed) => {
+            NEXT_REQUEST_TAG.store(seed, Ordering::Relaxed);
+            record_poll_diagnostic(
+                now_ms,
+                DiagnosticLevel::Info,
+                "request_tags_reserved",
+                "MeshCore request tag range reserved",
+            );
+        },
+        Err(_) => {
+            NEXT_REQUEST_TAG.store(MESHCORE_REQUEST_TAG_BASE, Ordering::Relaxed);
+            record_poll_diagnostic(
+                now_ms,
+                DiagnosticLevel::Warn,
+                "request_tags_reserve_failed",
+                "MeshCore request tags are using volatile fallback seed",
+            );
+        },
+    }
+}
 
 /// Queue the gateway's signed MeshCore advert after radio startup.
 pub fn queue_startup_advert(config: &GatewayConfig<MAX_TELEMETRY_PRODUCERS>, now_ms: u64)
@@ -287,6 +318,9 @@ impl<'a> RadioMeshcoreClient<'a>
                 match decrypt_response(identity, contact, frame.raw_payload()) {
                     Ok(response) => {
                         observed_response_frames = observed_response_frames.saturating_add(1);
+                        if response_is_login_success(&response) {
+                            continue;
+                        }
                         match telemetry_response_lpp(&response, request_tag) {
                             Ok(payload) => {
                                 let mut telemetry =
@@ -712,7 +746,8 @@ fn next_request_tag(now_ms: u64) -> u32
     if next == u32::MAX {
         NEXT_REQUEST_TAG.store(MESHCORE_REQUEST_TAG_BASE, Ordering::Relaxed);
     }
-    next.wrapping_add((now_ms / 1_000) as u32)
+    let _ = now_ms;
+    next
 }
 
 fn request_nonce(tag: u32, producer_id: TelemetryProducerId) -> u32

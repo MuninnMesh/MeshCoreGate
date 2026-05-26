@@ -21,7 +21,7 @@ use muninn_gate_core::{
 use crate::display::LocalDisplay;
 use crate::input::UserButton;
 use crate::platform::Esp32Platform;
-use crate::{diagnostics, meshcore, poll_control, serial, telemetry_state};
+use crate::{diagnostics, meshcore, poll_control, radio, serial, telemetry_state};
 
 /// Minimum interval between unchanged serial telemetry snapshots.
 pub const SERIAL_HEARTBEAT_MS: u64 = 60_000;
@@ -100,7 +100,7 @@ impl GatewayScheduler
         }
 
         let due_count = self.scheduler.due_producers(now_ms).len();
-        let summary = if due_count > 0 {
+        let summary = if due_count > 0 && radio::radio_ready() {
             self.poll_due::<V>(config, platform, state, display.as_deref_mut())
         } else {
             PollSummary::default()

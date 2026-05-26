@@ -205,51 +205,12 @@ fn write_metrics_json<const OUT: usize>(
     write_optional_f32(out, "battery_voltage", metrics.battery_voltage)?;
     write_optional_f32(out, "battery_percent", metrics.battery_percent)?;
     write_optional_f32(out, "voltage", metrics.voltage)?;
-    write_optional_f32(out, "bus_voltage", metrics.bus_voltage)?;
-    write_optional_f32(out, "shunt_voltage", metrics.shunt_voltage)?;
     write_optional_f32(out, "current_amps", metrics.current_amps)?;
     write_optional_f32(out, "power_watts", metrics.power_watts)?;
-    write_optional_f32(out, "energy_joules", metrics.energy_joules)?;
-    write_optional_f32(out, "charge_coulombs", metrics.charge_coulombs)?;
     write_optional_f32(out, "temperature_celsius", metrics.temperature_celsius)?;
     write_optional_f32(out, "humidity_percent", metrics.humidity_percent)?;
     write_optional_f32(out, "pressure_pa", metrics.pressure_pa)?;
     write_optional_f32(out, "gas_resistance_ohms", metrics.gas_resistance_ohms)?;
-    write_optional_f32(out, "iaq_index", metrics.iaq_index)?;
-    write_optional_f32(out, "co2_equivalent_ppm", metrics.co2_equivalent_ppm)?;
-    write_optional_f32(out, "tvoc_ppb", metrics.tvoc_ppb)?;
-    write_optional_f32(out, "latitude_degrees", metrics.latitude_degrees)?;
-    write_optional_f32(out, "longitude_degrees", metrics.longitude_degrees)?;
-    write_optional_f32(out, "altitude_meters", metrics.altitude_meters)?;
-    write_optional_f32(out, "speed_mps", metrics.speed_mps)?;
-    write_optional_f32(out, "heading_degrees", metrics.heading_degrees)?;
-    write_optional_f32(out, "hdop", metrics.hdop)?;
-    write_optional_u8(out, "satellites", metrics.satellites)?;
-    write_optional_u8(out, "gps_fix", metrics.gps_fix)?;
-    write_optional_f32(out, "acceleration_x_mps2", metrics.acceleration_x_mps2)?;
-    write_optional_f32(out, "acceleration_y_mps2", metrics.acceleration_y_mps2)?;
-    write_optional_f32(out, "acceleration_z_mps2", metrics.acceleration_z_mps2)?;
-    write_optional_f32(
-        out,
-        "angular_velocity_x_dps",
-        metrics.angular_velocity_x_dps,
-    )?;
-    write_optional_f32(
-        out,
-        "angular_velocity_y_dps",
-        metrics.angular_velocity_y_dps,
-    )?;
-    write_optional_f32(
-        out,
-        "angular_velocity_z_dps",
-        metrics.angular_velocity_z_dps,
-    )?;
-    write_optional_f32(out, "magnetic_field_x_ut", metrics.magnetic_field_x_ut)?;
-    write_optional_f32(out, "magnetic_field_y_ut", metrics.magnetic_field_y_ut)?;
-    write_optional_f32(out, "magnetic_field_z_ut", metrics.magnetic_field_z_ut)?;
-    write_optional_f32(out, "roll_degrees", metrics.roll_degrees)?;
-    write_optional_f32(out, "pitch_degrees", metrics.pitch_degrees)?;
-    write_optional_f32(out, "yaw_degrees", metrics.yaw_degrees)?;
     Ok(())
 }
 
@@ -277,19 +238,6 @@ fn write_optional_f32<const OUT: usize>(
     out: &mut String<OUT>,
     name: &str,
     value: Option<f32>,
-) -> Result<(), Error>
-{
-    if let Some(value) = value {
-        write!(out, ",\"{name}\":{value}")?;
-    }
-    Ok(())
-}
-
-#[cfg(feature = "serial-json")]
-fn write_optional_u8<const OUT: usize>(
-    out: &mut String<OUT>,
-    name: &str,
-    value: Option<u8>,
 ) -> Result<(), Error>
 {
     if let Some(value) = value {

@@ -531,6 +531,12 @@ pub fn login_response_is_success(
     }
 }
 
+/// Return true when a decrypted response is a repeater anonymous-login success.
+pub fn response_is_login_success(response: &MeshcoreResponse) -> bool
+{
+    login_response_is_success(response).is_ok()
+}
+
 /// Return telemetry LPP bytes when `response` matches the request tag.
 pub fn telemetry_response_lpp(
     response: &MeshcoreResponse,
@@ -873,10 +879,14 @@ mod tests
         MeshcoreContact,
         MeshcoreIdentity,
         MeshcoreRequestRoute,
+        MeshcoreResponse,
         build_gateway_advert,
         build_login_request,
         build_telemetry_request,
+        login_response_is_success,
+        response_is_login_success,
     };
+    use crate::MESH_PAYLOAD_MAX;
 
     #[test]
     fn builds_login_and_telemetry_frames()
@@ -931,6 +941,34 @@ mod tests
         assert_eq!(&payload[34..38], &7_u32.to_le_bytes());
         assert_eq!(payload[102], 0x81);
         assert_eq!(&payload[103..108], b"gate\0");
+    }
+
+    #[test]
+    fn accepts_login_ok_with_repeater_timestamp()
+    {
+        let response = login_response(0x1234_5678, b"OK");
+
+        assert_eq!(login_response_is_success(&response), Ok(()));
+        assert!(response_is_login_success(&response));
+    }
+
+    #[test]
+    fn accepts_legacy_binary_login_ok_marker()
+    {
+        let response = login_response(0x90ab_cdef, &[0]);
+
+        assert_eq!(login_response_is_success(&response), Ok(()));
+    }
+
+    fn login_response(tag: u32, status: &[u8]) -> MeshcoreResponse
+    {
+        let mut data = [0u8; MESH_PAYLOAD_MAX];
+        data[..4].copy_from_slice(&tag.to_le_bytes());
+        data[4..4 + status.len()].copy_from_slice(status);
+        MeshcoreResponse {
+            data,
+            len: 4 + status.len(),
+        }
     }
 
     fn hex(bytes: &[u8]) -> String<128>

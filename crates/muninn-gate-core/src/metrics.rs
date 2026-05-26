@@ -577,6 +577,30 @@ where
     write_optional_channel_family(
         out,
         records,
+        "muninn_gate_node_channel_voltage",
+        "Telemetry producer channel voltage.",
+        "gauge",
+        |channel| channel.metrics.voltage,
+    )?;
+    write_optional_channel_family(
+        out,
+        records,
+        "muninn_gate_node_channel_current_amps",
+        "Telemetry producer channel current in amperes.",
+        "gauge",
+        |channel| channel.metrics.current_amps,
+    )?;
+    write_optional_channel_family(
+        out,
+        records,
+        "muninn_gate_node_channel_power_watts",
+        "Telemetry producer channel power in watts.",
+        "gauge",
+        |channel| channel.metrics.power_watts,
+    )?;
+    write_optional_channel_family(
+        out,
+        records,
         "muninn_gate_node_channel_temperature_celsius",
         "Telemetry producer channel temperature in Celsius.",
         "gauge",
@@ -597,6 +621,14 @@ where
         "Telemetry producer channel pressure in pascals.",
         "gauge",
         |channel| channel.metrics.pressure_pa,
+    )?;
+    write_optional_channel_family(
+        out,
+        records,
+        "muninn_gate_node_channel_gas_resistance_ohms",
+        "Telemetry producer channel gas sensor resistance in ohms.",
+        "gauge",
+        |channel| channel.metrics.gas_resistance_ohms,
     )?;
     write_optional_producer_family(
         out,
@@ -816,6 +848,10 @@ mod tests
         let mut telemetry = ProducerTelemetry::new(producer_id, 1_000);
         telemetry.metrics.battery_voltage = Some(4.08);
         telemetry.set_channel_temperature(2, 22.5).unwrap();
+        telemetry.set_channel_gas_resistance(3, 123.45).unwrap();
+        telemetry.set_channel_voltage(4, 12.01).unwrap();
+        telemetry.set_channel_current(4, -1.234).unwrap();
+        telemetry.set_channel_power(4, 15.0).unwrap();
         telemetry.rssi = Some(-97);
         let gateway = store.gateway_metrics_mut();
         gateway.uptime_ms = 2_000;
@@ -844,7 +880,7 @@ mod tests
         store.update_producer(producer_id, telemetry).unwrap();
         store.record_poll_success(producer_id, 1_000).unwrap();
 
-        let rendered = render_prometheus::<4, 8192>(&store.snapshot()).unwrap();
+        let rendered = render_prometheus::<4, 12288>(&store.snapshot()).unwrap();
 
         assert!(rendered.contains("muninn_gate_up 1"));
         assert!(rendered.contains("muninn_gate_tx_power_level 14"));
@@ -872,6 +908,19 @@ mod tests
         assert!(rendered.contains(
             "muninn_gate_node_channel_temperature_celsius{node=\"roof_repeater\",channel=\"2\"} \
              22.5"
+        ));
+        assert!(rendered.contains(
+            "muninn_gate_node_channel_gas_resistance_ohms{node=\"roof_repeater\",channel=\"3\"} \
+             123.45"
+        ));
+        assert!(rendered.contains(
+            "muninn_gate_node_channel_voltage{node=\"roof_repeater\",channel=\"4\"} 12.01"
+        ));
+        assert!(rendered.contains(
+            "muninn_gate_node_channel_current_amps{node=\"roof_repeater\",channel=\"4\"} -1.234"
+        ));
+        assert!(rendered.contains(
+            "muninn_gate_node_channel_power_watts{node=\"roof_repeater\",channel=\"4\"} 15"
         ));
         assert!(rendered.contains("muninn_gate_node_rssi{node=\"roof_repeater\"} -97"));
         assert!(

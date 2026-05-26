@@ -189,6 +189,7 @@ where
             core::hint::spin_loop();
         }
     }
+    meshcore::initialize_request_tags(platform.now_ms());
     let radio_config = match radio::mesh_radio_config_from_gateway::<V>(&config) {
         Ok(config) => config,
         Err(_) => {

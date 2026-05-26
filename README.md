@@ -4,10 +4,11 @@ Muninn Gate is a small embedded telemetry gateway that bridges MeshCore-compatib
 
 It runs on a LoRa-capable board, polls configured MeshCore-compatible nodes for telemetry, and exposes the latest readings over WiFi/HTTP or USB serial. A local display can show selected gateway and node metrics, turning the gate node into a small field metrics hub. Configuration controls radio settings, producer identities, polling behavior, display output, HTTP access, and which telemetry values are surfaced locally.
 
-Producer telemetry is channel-aware. Simple outputs expose one default value per
-producer, while serial JSON and Prometheus channel metrics preserve individual
-MeshCore/LPP channel readings for multi-channel sensors such as INA3221 power
-monitors.
+Producer telemetry is channel-aware. Muninn Gate retains up to six MeshCore/LPP
+channels per producer: MCU battery/temperature, SHT4x temperature/humidity,
+BME680 temperature/humidity/pressure/gas, and three INA3221 power-monitor
+channels. Simple outputs expose one default value per producer, while serial
+JSON and Prometheus channel metrics preserve individual channel readings.
 
 ![Muninn Gate architecture diagram](assets/diagram.png)
 
@@ -131,9 +132,17 @@ muninn_gate_up 1
 # TYPE muninn_gate_node_battery_voltage gauge
 muninn_gate_node_battery_voltage{node="roof_repeater"} 4.08
 
-# HELP muninn_gate_node_channel_battery_voltage Telemetry producer channel battery voltage.
-# TYPE muninn_gate_node_channel_battery_voltage gauge
-muninn_gate_node_channel_battery_voltage{node="power_board",channel="1"} 12.1
+# HELP muninn_gate_node_channel_voltage Telemetry producer channel voltage.
+# TYPE muninn_gate_node_channel_voltage gauge
+muninn_gate_node_channel_voltage{node="power_board",channel="4"} 12.1
+
+# HELP muninn_gate_node_channel_current_amps Telemetry producer channel current in amperes.
+# TYPE muninn_gate_node_channel_current_amps gauge
+muninn_gate_node_channel_current_amps{node="power_board",channel="4"} 0.42
+
+# HELP muninn_gate_node_channel_power_watts Telemetry producer channel power in watts.
+# TYPE muninn_gate_node_channel_power_watts gauge
+muninn_gate_node_channel_power_watts{node="power_board",channel="4"} 5
 
 # HELP muninn_gate_node_rssi Last received RSSI from telemetry producer.
 # TYPE muninn_gate_node_rssi gauge

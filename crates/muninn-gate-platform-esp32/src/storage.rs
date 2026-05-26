@@ -46,6 +46,8 @@ const CONFIG_SLOT_BYTES: usize = SECTOR_SIZE as usize;
 const CONFIG_SLOT_WORDS: usize = CONFIG_SLOT_BYTES / 4;
 /// Record header size in bytes.
 const CONFIG_HEADER_BYTES: usize = 32;
+/// Optional persisted MeshCore request-tag seed offset in the record header.
+const CONFIG_REQUEST_TAG_SEED_OFFSET: usize = 20;
 /// Maximum bytes that fit in one persisted provisioning document.
 const CONFIG_PAYLOAD_BYTES: usize = CONFIG_SLOT_BYTES - CONFIG_HEADER_BYTES;
 /// Magic value for persisted Muninn Gate config records.
@@ -79,14 +81,40 @@ pub fn save_config_document(document: &str, config: &Esp32GatewayConfig)
     save_config_bytes(document.as_bytes())
 }
 
+/// Load the next MeshCore request-tag seed reserved for this gateway.
+pub fn load_request_tag_seed() -> Result<Option<u32>, StorageError>
+{
+    Ok(load_newest_slot()?.request_tag_seed)
+}
+
+/// Reserve a range of MeshCore request tags and return the first usable tag.
+pub fn reserve_request_tag_seed(fallback_seed: u32, reserve_count: u32)
+-> Result<u32, StorageError>
+{
+    let current_seed = load_request_tag_seed()?.unwrap_or(fallback_seed);
+    let current_seed = current_seed.max(fallback_seed);
+    let next_seed = current_seed
+        .checked_add(reserve_count)
+        .ok_or(StorageError::Corrupt)?;
+    let document = load_config_document()?;
+    save_config_bytes_with_request_tag_seed(document.as_slice(), Some(next_seed))?;
+    Ok(current_seed)
+}
+
 /// Load the newest valid config document from flash.
 fn load_config_document() -> Result<Vec<u8, USB_CONFIG_JSON_BYTES>, StorageError>
+{
+    read_slot_payload(load_newest_slot()?)
+}
+
+/// Load the newest valid config storage slot.
+fn load_newest_slot() -> Result<StoredSlot, StorageError>
 {
     let base = resolve_config_base_addr()?;
     let slot_a = read_slot_header(base)?;
     let slot_b = read_slot_header(base + SECTOR_SIZE)?;
 
-    let chosen = match (slot_a, slot_b) {
+    match (slot_a, slot_b) {
         (Some(a), Some(b)) => {
             if b.seq.wrapping_sub(a.seq) < (1_u32 << 31) {
                 Some(b)
@@ -98,13 +126,21 @@ fn load_config_document() -> Result<Vec<u8, USB_CONFIG_JSON_BYTES>, StorageError
         (None, Some(b)) => Some(b),
         (None, None) => None,
     }
-    .ok_or(StorageError::NotFound)?;
-
-    read_slot_payload(chosen)
+    .ok_or(StorageError::NotFound)
 }
 
 /// Save one config document with A/B sector rollover.
 fn save_config_bytes(document: &[u8]) -> Result<(), StorageError>
+{
+    let request_tag_seed = load_request_tag_seed().unwrap_or(None);
+    save_config_bytes_with_request_tag_seed(document, request_tag_seed)
+}
+
+/// Save one config document with an optional runtime request-tag seed.
+fn save_config_bytes_with_request_tag_seed(
+    document: &[u8],
+    request_tag_seed: Option<u32>,
+) -> Result<(), StorageError>
 {
     if document.is_empty() || document.len() > CONFIG_PAYLOAD_BYTES {
         return Err(StorageError::TooLarge);
@@ -135,7 +171,13 @@ fn save_config_bytes(document: &[u8]) -> Result<(), StorageError>
     };
 
     let mut words = [0xFFFF_FFFF_u32; CONFIG_SLOT_WORDS];
-    write_record_header(&mut words, next_seq, document.len() as u32, crc32(document));
+    write_record_header(
+        &mut words,
+        next_seq,
+        document.len() as u32,
+        crc32(document),
+        request_tag_seed,
+    );
     write_bytes(&mut words, CONFIG_HEADER_BYTES, document);
 
     erase_and_write_slot(target_addr / SECTOR_SIZE, target_addr, &words)?;
@@ -153,7 +195,13 @@ fn save_config_bytes(document: &[u8]) -> Result<(), StorageError>
 }
 
 /// Write record header bytes into the slot image.
-fn write_record_header(words: &mut [u32; CONFIG_SLOT_WORDS], seq: u32, payload_len: u32, crc: u32)
+fn write_record_header(
+    words: &mut [u32; CONFIG_SLOT_WORDS],
+    seq: u32,
+    payload_len: u32,
+    crc: u32,
+    request_tag_seed: Option<u32>,
+)
 {
     let mut header = [0xFF_u8; CONFIG_HEADER_BYTES];
     header[0..4].copy_from_slice(&CONFIG_MAGIC.to_le_bytes());
@@ -162,6 +210,10 @@ fn write_record_header(words: &mut [u32; CONFIG_SLOT_WORDS], seq: u32, payload_l
     header[8..12].copy_from_slice(&seq.to_le_bytes());
     header[12..16].copy_from_slice(&payload_len.to_le_bytes());
     header[16..20].copy_from_slice(&crc.to_le_bytes());
+    if let Some(request_tag_seed) = request_tag_seed {
+        header[CONFIG_REQUEST_TAG_SEED_OFFSET..CONFIG_REQUEST_TAG_SEED_OFFSET + 4]
+            .copy_from_slice(&request_tag_seed.to_le_bytes());
+    }
     write_bytes(words, 0, &header);
 }
 
@@ -214,6 +266,12 @@ fn read_slot_header(addr: u32) -> Result<Option<StoredSlot>, StorageError>
             .try_into()
             .map_err(|_| StorageError::Corrupt)?,
     );
+    let request_tag_seed = u32::from_le_bytes(
+        header[CONFIG_REQUEST_TAG_SEED_OFFSET..CONFIG_REQUEST_TAG_SEED_OFFSET + 4]
+            .try_into()
+            .map_err(|_| StorageError::Corrupt)?,
+    );
+    let request_tag_seed = (request_tag_seed != u32::MAX).then_some(request_tag_seed);
 
     if version != CONFIG_VERSION
         || usize::from(header_len) != CONFIG_HEADER_BYTES
@@ -228,6 +286,7 @@ fn read_slot_header(addr: u32) -> Result<Option<StoredSlot>, StorageError>
         seq,
         payload_len,
         payload_crc,
+        request_tag_seed,
     }))
 }
 
@@ -395,13 +454,15 @@ fn crc32(data: &[u8]) -> u32
 struct StoredSlot
 {
     /// Absolute flash address of the slot.
-    addr:        u32,
+    addr:             u32,
     /// Monotonic rollover sequence.
-    seq:         u32,
+    seq:              u32,
     /// Payload length in bytes.
-    payload_len: u32,
+    payload_len:      u32,
     /// CRC32 of the payload.
-    payload_crc: u32,
+    payload_crc:      u32,
+    /// Next MeshCore request tag seed reserved for this gateway.
+    request_tag_seed: Option<u32>,
 }
 
 /// Config storage failure.

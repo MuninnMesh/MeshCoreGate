@@ -74,6 +74,8 @@ pub const BATTERY_ADC_AVERAGE_SAMPLES: u8 = 16;
 static SELECTED_TX_POWER_LEVEL: AtomicI32 = AtomicI32::new(0);
 /// Whether the radio host callback currently reports TX as active.
 static TX_ACTIVE: AtomicBool = AtomicBool::new(false);
+/// Whether the radio owner has entered continuous RX service.
+static RADIO_READY: AtomicBool = AtomicBool::new(false);
 /// Latest board battery voltage sampled by the radio owner task.
 static BATTERY_MV: AtomicU32 = AtomicU32::new(0);
 /// Frames waiting to be transmitted by the APP CPU radio owner.
@@ -193,6 +195,12 @@ pub fn radio_tx_active() -> bool
     TX_ACTIVE.load(Ordering::Relaxed)
 }
 
+/// Return whether the radio owner has entered continuous RX service.
+pub fn radio_ready() -> bool
+{
+    RADIO_READY.load(Ordering::Relaxed)
+}
+
 /// Queue a MeshCore frame for serialized radio transmission.
 pub fn enqueue_tx_frame(frame: MeshTxFrame) -> Result<(), RadioQueueError>
 {
@@ -217,6 +225,7 @@ pub fn run_radio_owner_task(
     tx_power: TxPowerMapping,
 ) -> !
 {
+    RADIO_READY.store(false, Ordering::Relaxed);
     register_gateway_radio_host(tx_power);
     block_on(run_radio_owner_loop(resources, radio_config, tx_power))
 }
@@ -305,6 +314,7 @@ async fn run_radio_owner_loop(
             "SX1262 continuous RX start failed",
         );
     } else {
+        RADIO_READY.store(true, Ordering::Relaxed);
         record_radio_event(
             DiagnosticLevel::Info,
             "radio_rx_started",
