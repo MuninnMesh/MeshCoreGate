@@ -24,7 +24,6 @@ use muninn_gate_core::{
     TelemetryProducerConfig,
     TelemetryProducerId,
     TelemetryProducerKind,
-    TelemetryRoute,
     decode_lpp_payload,
 };
 use muninn_mesh_meshcore_lib::{
@@ -196,7 +195,7 @@ impl<'a> RadioMeshcoreClient<'a>
             Ok(identity) => identity,
             Err(reason) => return Err(record_poll_failure(producer_id, self.now_ms, reason)),
         };
-        let contact = match producer_contact(self.config, producer) {
+        let contact = match producer_contact(producer) {
             Ok(contact) => contact,
             Err(reason) => return Err(record_poll_failure(producer_id, self.now_ms, reason)),
         };
@@ -614,30 +613,11 @@ fn gateway_identity(
 }
 
 fn producer_contact(
-    config: &GatewayConfig<MAX_TELEMETRY_PRODUCERS>,
     producer: &TelemetryProducerConfig,
 ) -> Result<MeshcoreContact, PollFailureReason>
 {
-    let route = match &producer.route {
-        TelemetryRoute::Direct => MeshcoreRequestRoute::Direct,
-        TelemetryRoute::Flood => MeshcoreRequestRoute::Flood {
-            path_hash_size: meshcore_path_hash_size(config)?,
-        },
-        TelemetryRoute::Path(_) => return Err(PollFailureReason::Unsupported),
-    };
-    MeshcoreContact::from_hex(producer.public_key.as_str(), route).map_err(packet_error_to_reason)
-}
-
-fn meshcore_path_hash_size(
-    config: &GatewayConfig<MAX_TELEMETRY_PRODUCERS>,
-) -> Result<u8, PollFailureReason>
-{
-    let path_hash_size = config.meshcore.routing.path_mode.saturating_add(1);
-    if (1..=3).contains(&path_hash_size) {
-        Ok(path_hash_size)
-    } else {
-        Err(PollFailureReason::Unsupported)
-    }
+    MeshcoreContact::from_hex(producer.public_key.as_str(), MeshcoreRequestRoute::Direct)
+        .map_err(packet_error_to_reason)
 }
 
 fn enqueue_frame(

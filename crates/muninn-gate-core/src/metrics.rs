@@ -477,66 +477,6 @@ where
     write_optional_producer_family(
         out,
         records,
-        "muninn_gate_node_battery_voltage",
-        "Telemetry producer battery voltage.",
-        "gauge",
-        |record| {
-            record
-                .telemetry
-                .and_then(|telemetry| telemetry.metrics.battery_voltage)
-        },
-    )?;
-    write_optional_producer_family(
-        out,
-        records,
-        "muninn_gate_node_battery_percent",
-        "Telemetry producer battery charge percent.",
-        "gauge",
-        |record| {
-            record
-                .telemetry
-                .and_then(|telemetry| telemetry.metrics.battery_percent)
-        },
-    )?;
-    write_optional_producer_family(
-        out,
-        records,
-        "muninn_gate_node_temperature_celsius",
-        "Telemetry producer temperature in Celsius.",
-        "gauge",
-        |record| {
-            record
-                .telemetry
-                .and_then(|telemetry| telemetry.metrics.temperature_celsius)
-        },
-    )?;
-    write_optional_producer_family(
-        out,
-        records,
-        "muninn_gate_node_humidity_percent",
-        "Telemetry producer relative humidity percent.",
-        "gauge",
-        |record| {
-            record
-                .telemetry
-                .and_then(|telemetry| telemetry.metrics.humidity_percent)
-        },
-    )?;
-    write_optional_producer_family(
-        out,
-        records,
-        "muninn_gate_node_pressure_pa",
-        "Telemetry producer pressure in pascals.",
-        "gauge",
-        |record| {
-            record
-                .telemetry
-                .and_then(|telemetry| telemetry.metrics.pressure_pa)
-        },
-    )?;
-    write_optional_producer_family(
-        out,
-        records,
         "muninn_gate_node_rssi",
         "Last received RSSI from telemetry producer.",
         "gauge",
@@ -846,7 +786,7 @@ mod tests
         let mut store = FixedTelemetryStore::from_config(&config).unwrap();
         let producer_id = config.producers[0].id();
         let mut telemetry = ProducerTelemetry::new(producer_id, 1_000);
-        telemetry.metrics.battery_voltage = Some(4.08);
+        telemetry.set_channel_voltage(1, 4.08).unwrap();
         telemetry.set_channel_temperature(2, 22.5).unwrap();
         telemetry.set_channel_gas_resistance(3, 123.45).unwrap();
         telemetry.set_channel_voltage(4, 12.01).unwrap();
@@ -904,7 +844,13 @@ mod tests
         assert!(rendered.contains("muninn_gate_diagnostic_dropped_total 1"));
         assert!(rendered.contains("muninn_gate_diagnostic_error_events 1"));
         assert!(rendered.contains("muninn_gate_last_error_age_ms 500"));
-        assert!(rendered.contains("muninn_gate_node_battery_voltage{node=\"roof_repeater\"} 4.08"));
+        assert!(!rendered.contains("muninn_gate_node_battery_voltage{"));
+        assert!(!rendered.contains("muninn_gate_node_temperature_celsius{"));
+        assert!(!rendered.contains("muninn_gate_node_humidity_percent{"));
+        assert!(!rendered.contains("muninn_gate_node_pressure_pa{"));
+        assert!(rendered.contains(
+            "muninn_gate_node_channel_battery_voltage{node=\"roof_repeater\",channel=\"1\"} 4.08"
+        ));
         assert!(rendered.contains(
             "muninn_gate_node_channel_temperature_celsius{node=\"roof_repeater\",channel=\"2\"} \
              22.5"
@@ -930,12 +876,6 @@ mod tests
         assert!(rendered.contains("muninn_gate_poll_success_rate{node=\"roof_repeater\"} 1.000"));
         assert!(
             rendered.contains("muninn_gate_node_last_poll_age_ms{node=\"roof_repeater\"} 1000")
-        );
-        assert_family_sample_before_next_help(
-            &rendered,
-            "muninn_gate_node_battery_voltage",
-            "muninn_gate_node_battery_percent",
-            "muninn_gate_node_battery_voltage{node=\"roof_repeater\"} 4.08",
         );
         assert_family_sample_before_next_help(
             &rendered,

@@ -7,8 +7,9 @@ It runs on a LoRa-capable board, polls configured MeshCore-compatible nodes for 
 Producer telemetry is channel-aware. Muninn Gate retains up to six MeshCore/LPP
 channels per producer: MCU battery/temperature, SHT4x temperature/humidity,
 BME680 temperature/humidity/pressure/gas, and three INA3221 power-monitor
-channels. Simple outputs expose one default value per producer, while serial
-JSON and Prometheus channel metrics preserve individual channel readings.
+channels. Serial JSON exposes a compact default value per producer plus the
+full channel list; Prometheus sensor metrics use channel labels so dashboards
+can distinguish individual readings.
 
 ![Muninn Gate architecture diagram](assets/diagram.png)
 
@@ -26,7 +27,7 @@ JSON and Prometheus channel metrics preserve individual channel readings.
 - `config.example.jsonc`: commented provisioning reference.
 - `tools/cli.py`: config template and USB provisioning helper.
 - `docs/codemap`: crate ownership and dependency notes.
-- `docs/design`: firmware architecture and runtime flow notes.
+- `docs/design`: firmware architecture, runtime flow, and reliability notes.
 - `docs/boards`: concrete board notes and hardware policy references.
 
 ## Building And Flashing Firmware
@@ -103,6 +104,9 @@ The ESP32 path uses `esp-wifi` station mode with `smoltcp` DHCP/TCP. The WiFi
 driver uses `esp-wifi`'s `esp-alloc` integration and RAM-backed driver state;
 the firmware does not add a separate NVS partition for WiFi credentials.
 
+Reliability policy for WiFi, DHCP, HTTP sockets, and direct-only MeshCore TX is
+documented in [docs/design/firmware/10_RELIABILITY.md](docs/design/firmware/10_RELIABILITY.md).
+
 ## USB Serial
 
 USB serial accepts provisioning commands and emits newline-oriented JSON output. After the device is provisioned, a short boot-time USB update window accepts replacement config before WiFi starts. A valid replacement is stored in flash and applied after reboot.
@@ -128,9 +132,9 @@ Useful commands:
 # TYPE muninn_gate_up gauge
 muninn_gate_up 1
 
-# HELP muninn_gate_node_battery_voltage Telemetry producer battery voltage.
-# TYPE muninn_gate_node_battery_voltage gauge
-muninn_gate_node_battery_voltage{node="roof_repeater"} 4.08
+# HELP muninn_gate_node_channel_battery_voltage Telemetry producer channel battery voltage.
+# TYPE muninn_gate_node_channel_battery_voltage gauge
+muninn_gate_node_channel_battery_voltage{node="roof_repeater",channel="1"} 4.08
 
 # HELP muninn_gate_node_channel_voltage Telemetry producer channel voltage.
 # TYPE muninn_gate_node_channel_voltage gauge

@@ -39,6 +39,21 @@ pub enum HttpRoute
     NotFound,
 }
 
+impl HttpRoute
+{
+    /// Return a compact route label for diagnostics.
+    pub const fn as_str(self) -> &'static str
+    {
+        match self {
+            Self::Metrics => "metrics",
+            Self::Logs => "logs",
+            Self::PollNow => "poll",
+            Self::Unauthorized => "unauthorized",
+            Self::NotFound => "not_found",
+        }
+    }
+}
+
 /// Rendered HTTP response components.
 pub struct HttpResponse
 {
@@ -62,6 +77,13 @@ pub fn route_request(request: &[u8]) -> HttpRoute
     } else {
         HttpRoute::NotFound
     }
+}
+
+/// Return whether enough bytes have arrived to classify and handle an HTTP request.
+pub fn request_headers_complete(request: &[u8]) -> bool
+{
+    request.windows(4).any(|window| window == b"\r\n\r\n")
+        || request.windows(2).any(|window| window == b"\n\n")
 }
 
 /// Build an HTTP response for one route.

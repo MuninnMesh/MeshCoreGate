@@ -113,6 +113,38 @@ impl TelemetryMetrics
             gas_resistance_ohms: None,
         }
     }
+
+    /// Overlay populated values from another metric set.
+    pub fn merge_from(&mut self, other: Self)
+    {
+        if other.battery_voltage.is_some() {
+            self.battery_voltage = other.battery_voltage;
+        }
+        if other.battery_percent.is_some() {
+            self.battery_percent = other.battery_percent;
+        }
+        if other.voltage.is_some() {
+            self.voltage = other.voltage;
+        }
+        if other.current_amps.is_some() {
+            self.current_amps = other.current_amps;
+        }
+        if other.power_watts.is_some() {
+            self.power_watts = other.power_watts;
+        }
+        if other.temperature_celsius.is_some() {
+            self.temperature_celsius = other.temperature_celsius;
+        }
+        if other.humidity_percent.is_some() {
+            self.humidity_percent = other.humidity_percent;
+        }
+        if other.pressure_pa.is_some() {
+            self.pressure_pa = other.pressure_pa;
+        }
+        if other.gas_resistance_ohms.is_some() {
+            self.gas_resistance_ohms = other.gas_resistance_ohms;
+        }
+    }
 }
 
 /// Last-known telemetry reported by one producer.
@@ -195,6 +227,27 @@ impl ProducerTelemetry
         update(&mut channel);
         *slot = Some(channel);
         Ok(())
+    }
+
+    /// Overlay populated values from another telemetry record for this producer.
+    pub fn merge_from(&mut self, other: Self)
+    {
+        self.timestamp_ms = other.timestamp_ms;
+        self.metrics.merge_from(other.metrics);
+        if other.rssi.is_some() {
+            self.rssi = other.rssi;
+        }
+        if other.snr.is_some() {
+            self.snr = other.snr;
+        }
+        if other.uptime_ms.is_some() {
+            self.uptime_ms = other.uptime_ms;
+        }
+        for other_channel in other.channels() {
+            let _ = self.update_channel(other_channel.channel_id, |channel| {
+                channel.metrics.merge_from(other_channel.metrics);
+            });
+        }
     }
 
     /// Store a channel battery voltage and update the producer default value.
@@ -710,6 +763,22 @@ impl<const N: usize> FixedTelemetryStore<N>
         Ok(())
     }
 
+    /// Merge one producer observation with any retained telemetry.
+    pub fn merge_producer(
+        &mut self,
+        producer_id: TelemetryProducerId,
+        telemetry: ProducerTelemetry,
+    ) -> Result<(), Error>
+    {
+        let record = self.record_mut(producer_id)?;
+        if let Some(existing) = record.telemetry.as_mut() {
+            existing.merge_from(telemetry);
+        } else {
+            record.telemetry = Some(telemetry);
+        }
+        Ok(())
+    }
+
     fn record_mut(
         &mut self,
         producer_id: TelemetryProducerId,
@@ -870,6 +939,43 @@ mod tests
         assert_f32_eq(ina3221_channel_1.voltage, 12.01);
         assert_f32_eq(ina3221_channel_1.current_amps, -1.234);
         assert_f32_eq(ina3221_channel_1.power_watts, 15.0);
+    }
+
+    #[test]
+    fn merges_partial_observation_without_dropping_channels()
+    {
+        let producer_id = TelemetryProducerId::from_public_key("producer-public-key");
+        let mut telemetry = ProducerTelemetry::new(producer_id, 100);
+        telemetry.set_channel_temperature(2, 21.1).unwrap();
+        telemetry.set_channel_humidity(2, 48.5).unwrap();
+        telemetry.set_channel_voltage(4, 12.01).unwrap();
+        telemetry.set_channel_current(4, -1.234).unwrap();
+        telemetry.set_channel_power(4, 15.0).unwrap();
+
+        let mut partial = ProducerTelemetry::new(producer_id, 200);
+        partial.rssi = Some(-28);
+        partial.snr = Some(12.0);
+        partial.set_channel_voltage(1, 4.23).unwrap();
+        partial.set_channel_temperature(1, 27.7).unwrap();
+
+        telemetry.merge_from(partial);
+
+        assert_eq!(telemetry.timestamp_ms, 200);
+        assert_eq!(telemetry.channels().count(), 3);
+        assert_eq!(telemetry.rssi, Some(-28));
+        assert_f32_eq(telemetry.channel(1).unwrap().metrics.battery_voltage, 4.23);
+        assert_f32_eq(
+            telemetry.channel(1).unwrap().metrics.temperature_celsius,
+            27.7,
+        );
+        assert_f32_eq(
+            telemetry.channel(2).unwrap().metrics.temperature_celsius,
+            21.1,
+        );
+        assert_f32_eq(telemetry.channel(2).unwrap().metrics.humidity_percent, 48.5);
+        assert_f32_eq(telemetry.channel(4).unwrap().metrics.voltage, 12.01);
+        assert_f32_eq(telemetry.channel(4).unwrap().metrics.current_amps, -1.234);
+        assert_f32_eq(telemetry.channel(4).unwrap().metrics.power_watts, 15.0);
     }
 
     fn push_u8(payload: &mut std::vec::Vec<u8>, channel: u8, data_type: u8, value: u8)

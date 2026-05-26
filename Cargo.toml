@@ -30,6 +30,7 @@ esp-hal-embassy = "0.9.1"
 esp-println = { version = "0.16.1", default-features = false }
 esp-rom-sys = "0.1.4"
 esp-wifi = { version = "0.15.1", default-features = false }
+esp-wifi-sys = "0.7.1"
 heapless = "0.8.0"
 hmac = { version = "0.13.0", default-features = false }
 log = "0.4.28"

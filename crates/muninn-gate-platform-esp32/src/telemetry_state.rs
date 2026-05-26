@@ -166,7 +166,7 @@ pub fn record_producer_observation(
 {
     critical_section::with(|cs| {
         let mut store = TELEMETRY_STORE.borrow_ref_mut(cs);
-        TelemetryStore::update_producer(&mut *store, producer_id, telemetry)
+        store.merge_producer(producer_id, telemetry)
     })
 }
 

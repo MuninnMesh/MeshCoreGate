@@ -37,8 +37,8 @@
   "meshcore": { // Gateway MeshCore identity and routing.
     "public_key": "gateway-public-key", // Gateway ID in MeshCore.
     "private_key": "gateway-private-key", // Gateway MeshCore 64-byte expanded private key.
-    "routing": { // MeshCore route/path diagnostics settings.
-      "path_mode": 2 // MeshCore path.hash.mode: 0=1 byte, 1=2 bytes, 2=3 bytes.
+    "routing": { // Retained MeshCore route/path diagnostics settings.
+      "path_mode": 2 // MeshCore path.hash.mode; outbound firmware TX is direct-only.
     }
   },
 
@@ -49,15 +49,15 @@
       "password": null, // Optional repeater password; companion producers must keep this null.
       "name": "handheld_node", // Optional display/metrics name.
       "enabled": true, // Set false to keep configured but skip polling.
-      "route": "direct" // "direct", "flood", or an explicit path later.
+      "route": "direct" // Legacy field; firmware normalizes outbound TX to direct.
     },
     {
       "public_key": "repeater-public-key", // Repeater ID in MeshCore.
       "kind": "repeater", // Repeater polling uses MeshCore login before telemetry request.
       "password": null, // Set to the repeater admin password when required.
       "name": "roof_repeater", // Optional display/metrics name.
-      "enabled": false, // Enable after replacing the key and route with real values.
-      "route": "direct" // Use "flood" when direct routing is not available.
+      "enabled": false, // Enable after replacing the key with a real value.
+      "route": "direct" // Legacy field; repeater login and replies are direct-only.
     }
   ]
 }

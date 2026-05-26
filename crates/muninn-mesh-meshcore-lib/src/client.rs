@@ -29,14 +29,12 @@ pub const MESHCORE_REQ_TYPE_GET_TELEMETRY_DATA: u8 = 0x03;
 pub const MESHCORE_RESP_SERVER_LOGIN_OK: u8 = 0x00;
 /// Maximum password bytes accepted by official MeshCore login packets.
 pub const MESHCORE_LOGIN_PASSWORD_MAX: usize = 15;
-/// MeshCore flood route type.
-pub const MESHCORE_ROUTE_FLOOD: u8 = 0x01;
 /// MeshCore direct route type.
-pub const MESHCORE_ROUTE_DIRECT: u8 = 0x02;
-/// MeshCore transport-flood route type.
-pub const MESHCORE_ROUTE_TRANSPORT_FLOOD: u8 = 0x00;
+const MESHCORE_ROUTE_DIRECT: u8 = 0x02;
+/// MeshCore transport-flood route type. This is accepted while parsing received packets only.
+const MESHCORE_ROUTE_TRANSPORT_FLOOD: u8 = 0x00;
 /// MeshCore transport-direct route type.
-pub const MESHCORE_ROUTE_TRANSPORT_DIRECT: u8 = 0x03;
+const MESHCORE_ROUTE_TRANSPORT_DIRECT: u8 = 0x03;
 /// MeshCore advert type used by companion/client-like nodes.
 pub const MESHCORE_ADVERT_TYPE_COMPANION: u8 = 0x01;
 /// MeshCore advert appdata flag indicating a display name is present.
@@ -66,6 +64,10 @@ pub const MESHCORE_TAG_BYTES: usize = 4;
 const REQUEST_COMMAND_OFFSET: usize = MESHCORE_TAG_BYTES;
 /// MeshCore telemetry request plaintext byte length.
 const TELEMETRY_REQUEST_PLAINTEXT_BYTES: usize = 13;
+/// MeshCore telemetry request inverse permission-mask byte offset.
+const TELEMETRY_REQUEST_INVERSE_PERMISSION_MASK_OFFSET: usize = 5;
+/// Request every telemetry group allowed by the producer ACL.
+const TELEMETRY_REQUEST_ALL_ALLOWED_GROUPS: u8 = 0;
 /// MeshCore telemetry request nonce byte offset.
 const TELEMETRY_REQUEST_NONCE_OFFSET: usize = 9;
 /// MeshCore login response status byte offset.
@@ -86,8 +88,6 @@ const WIRE_TRANSPORT_HEADER_BYTES: usize = 4;
 const WIRE_PATH_LEN_BYTES: usize = 1;
 /// MeshCore path hash-count bitmask in the encoded path length byte.
 const PATH_HASH_COUNT_MASK: u8 = 0x3f;
-/// Maximum path hashes representable in a MeshCore path length byte.
-const PATH_HASH_COUNT_MAX: u8 = PATH_HASH_COUNT_MASK;
 /// AES block size used by MeshCore AES-128 payloads.
 const AES_BLOCK_BYTES: usize = 16;
 /// HMAC prefix byte count included before encrypted payload bytes.
@@ -254,12 +254,6 @@ pub enum MeshcoreRequestRoute
 {
     /// Send as a zero-hop direct packet.
     Direct,
-    /// Send as a flood packet using the selected path hash size.
-    Flood
-    {
-        /// Number of bytes per path hash, from 1 to 3.
-        path_hash_size: u8,
-    },
 }
 
 impl MeshcoreRequestRoute
@@ -269,7 +263,6 @@ impl MeshcoreRequestRoute
     {
         match self {
             Self::Direct => MESHCORE_ROUTE_DIRECT,
-            Self::Flood { .. } => MESHCORE_ROUTE_FLOOD,
         }
     }
 
@@ -278,7 +271,6 @@ impl MeshcoreRequestRoute
     {
         match self {
             Self::Direct => Ok(0),
-            Self::Flood { path_hash_size } => encode_path_len(path_hash_size, 0),
         }
     }
 
@@ -287,20 +279,11 @@ impl MeshcoreRequestRoute
     {
         match self {
             Self::Direct => Ok(MESHCORE_MIN_PATH_HASH_BYTES),
-            Self::Flood { path_hash_size } => {
-                if path_hash_size < MESHCORE_MIN_PATH_HASH_BYTES
-                    || path_hash_size > MESHCORE_MAX_PATH_HASH_BYTES
-                {
-                    Err(MeshcoreClientPacketError::UnsupportedRoute)
-                } else {
-                    Ok(path_hash_size)
-                }
-            },
         }
     }
 }
 
-/// MeshCore public-key hash bytes used in direct and flood-routed requests.
+/// MeshCore public-key hash bytes used in direct requests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MeshcorePathHash
 {
@@ -437,6 +420,9 @@ pub fn build_telemetry_request(
     let mut plain = [0u8; TELEMETRY_REQUEST_PLAINTEXT_BYTES];
     plain[..MESHCORE_TAG_BYTES].copy_from_slice(&tag.to_le_bytes());
     plain[REQUEST_COMMAND_OFFSET] = MESHCORE_REQ_TYPE_GET_TELEMETRY_DATA;
+    // MeshCore interprets this byte as the inverse of the requested telemetry
+    // permission mask. Zero requests every sensor group the contact may access.
+    plain[TELEMETRY_REQUEST_INVERSE_PERMISSION_MASK_OFFSET] = TELEMETRY_REQUEST_ALL_ALLOWED_GROUPS;
     plain[TELEMETRY_REQUEST_NONCE_OFFSET..TELEMETRY_REQUEST_NONCE_OFFSET + MESHCORE_TAG_BYTES]
         .copy_from_slice(&nonce.to_le_bytes());
 
@@ -485,7 +471,11 @@ pub fn build_gateway_advert(
     body.extend_from_slice(appdata.as_slice())
         .map_err(|_| MeshcoreClientPacketError::PayloadTooLarge)?;
 
-    build_advert_wire_frame(body.as_slice())
+    build_wire_frame(
+        MESH_KIND_ADVERT,
+        MeshcoreRequestRoute::Direct,
+        body.as_slice(),
+    )
 }
 
 /// Decrypt a direct response or path-return response for this contact.
@@ -676,20 +666,6 @@ fn build_wire_frame(
         .ok_or(MeshcoreClientPacketError::PayloadTooLarge)
 }
 
-/// Build a flood advert frame with MeshCore's untyped zero-hop advert path.
-fn build_advert_wire_frame(body: &[u8]) -> Result<MeshTxFrame, MeshcoreClientPacketError>
-{
-    let mut raw = Vec::<u8, MESH_PAYLOAD_MAX>::new();
-    raw.push((MESH_KIND_ADVERT << WIRE_PAYLOAD_KIND_SHIFT) | MESHCORE_ROUTE_FLOOD)
-        .map_err(|_| MeshcoreClientPacketError::PayloadTooLarge)?;
-    raw.push(0)
-        .map_err(|_| MeshcoreClientPacketError::PayloadTooLarge)?;
-    raw.extend_from_slice(body)
-        .map_err(|_| MeshcoreClientPacketError::PayloadTooLarge)?;
-    MeshTxFrame::from_slice(MESH_KIND_ADVERT, raw.as_slice())
-        .ok_or(MeshcoreClientPacketError::PayloadTooLarge)
-}
-
 /// Encrypt with AES-128-ECB and append MeshCore's 2-byte HMAC prefix.
 fn encrypt_then_mac(
     shared_secret: &[u8; 32],
@@ -842,22 +818,6 @@ fn hex_nibble(byte: u8) -> Option<u8>
     }
 }
 
-/// Encode MeshCore path length mode and path count.
-const fn encode_path_len(
-    path_hash_size: u8,
-    path_hash_count: u8,
-) -> Result<u8, MeshcoreClientPacketError>
-{
-    if path_hash_size < MESHCORE_MIN_PATH_HASH_BYTES
-        || path_hash_size > MESHCORE_MAX_PATH_HASH_BYTES
-        || path_hash_count > PATH_HASH_COUNT_MAX
-    {
-        return Err(MeshcoreClientPacketError::UnsupportedRoute);
-    }
-    Ok(((path_hash_size - MESHCORE_MIN_PATH_HASH_BYTES) << 6)
-        | (path_hash_count & PATH_HASH_COUNT_MASK))
-}
-
 /// Return path byte length for an encoded MeshCore path length byte.
 const fn path_byte_len(path_len: u8) -> Result<usize, MeshcoreClientPacketError>
 {
@@ -898,17 +858,17 @@ mod tests
         .unwrap();
         let contact = MeshcoreContact::from_hex(
             "f582bb6c7ac6f647c187c57b85906f9cbf51d4871ee41d080d4e65bec6cc37a8",
-            MeshcoreRequestRoute::Flood { path_hash_size: 3 },
+            MeshcoreRequestRoute::Direct,
         )
         .unwrap();
 
         let login = build_login_request(&identity, &contact, "secret", 1).unwrap();
         let telemetry = build_telemetry_request(&identity, &contact, 2, 3).unwrap();
 
-        assert_eq!(login.payload_slice()[0], (0x07 << 2) | 0x01);
-        assert_eq!(login.payload_slice()[1], 0x80);
-        assert_eq!(telemetry.payload_slice()[0], 0x01);
-        assert_eq!(telemetry.payload_slice()[1], 0x80);
+        assert_eq!(login.payload_slice()[0], (0x07 << 2) | 0x02);
+        assert_eq!(login.payload_slice()[1], 0);
+        assert_eq!(telemetry.payload_slice()[0], (0x00 << 2) | 0x02);
+        assert_eq!(telemetry.payload_slice()[1], 0);
     }
 
     #[test]
@@ -935,7 +895,7 @@ mod tests
         let payload = advert.payload_slice();
 
         assert_eq!(advert.kind, 0x04);
-        assert_eq!(payload[0], (0x04 << 2) | 0x01);
+        assert_eq!(payload[0], (0x04 << 2) | 0x02);
         assert_eq!(payload[1], 0);
         assert_eq!(&payload[2..34], &identity.public_key);
         assert_eq!(&payload[34..38], &7_u32.to_le_bytes());

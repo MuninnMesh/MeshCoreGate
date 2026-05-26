@@ -13,8 +13,8 @@
 //!   waiting.
 //! - Create a `smoltcp` Ethernet interface over the ESP station device and poll DHCP until an IPv4
 //!   lease is available.
-//! - Bind one TCP socket to `http.port` and serve `/metrics`, `/logs`, and `/poll`. Responses are
-//!   rendered into fixed-capacity buffers before they are written to the socket.
+//! - Bind a small pool of TCP sockets to `http.port` and serve `/metrics`, `/logs`, and `/poll`.
+//!   Responses are rendered into fixed-capacity buffers before they are written to the socket.
 //! - Keep polling WiFi, DHCP, HTTP, the user button, serial JSON, diagnostics, and the telemetry
 //!   scheduler in one blocking loop. The LoRa radio owner still runs separately on the APP CPU, so
 //!   this network loop can block on TCP writes without missing radio IRQ work.
@@ -29,6 +29,7 @@ use core::cmp::min;
 use core::fmt;
 
 use esp_hal::delay::Delay;
+use esp_wifi::config::PowerSaveMode;
 use esp_wifi::wifi::event::{EventExt as _, StaDisconnected};
 use esp_wifi::wifi::{AuthMethod, ClientConfiguration, Configuration, WifiDevice};
 use muninn_gate_core::config::MAX_TELEMETRY_PRODUCERS;
@@ -55,6 +56,7 @@ use smoltcp::iface::{
 use smoltcp::socket::{dhcpv4, tcp};
 use smoltcp::time::{Duration as SmoltcpDuration, Instant as SmoltcpInstant};
 use smoltcp::wire::{EthernetAddress, HardwareAddress, IpCidr};
+use static_cell::StaticCell;
 
 use crate::display::LocalDisplay;
 use crate::input::UserButton;
@@ -64,22 +66,40 @@ use crate::{diagnostics, http_metrics, report_state, serial};
 
 /// HTTP request receive buffer size.
 pub const HTTP_REQUEST_BUFFER_BYTES: usize = 1024;
-/// TCP receive buffer size for the HTTP socket.
-pub const HTTP_TCP_RX_BUFFER_BYTES: usize = 2048;
-/// TCP transmit buffer size for the HTTP socket.
-pub const HTTP_TCP_TX_BUFFER_BYTES: usize = 6144;
-/// Number of 250 ms connection checks before WiFi startup fails.
+/// Number of parallel HTTP sockets. smoltcp has no listen backlog, so one socket is fragile.
+pub const HTTP_SOCKET_COUNT: usize = 2;
+/// TCP receive buffer size for each HTTP socket.
+pub const HTTP_TCP_RX_BUFFER_BYTES: usize = 1024;
+/// TCP transmit buffer size for each HTTP socket.
+pub const HTTP_TCP_TX_BUFFER_BYTES: usize = 2048;
+/// Milliseconds between WiFi association checks.
+pub const WIFI_CONNECT_POLL_MS: u32 = 250;
+/// Number of connection checks before WiFi startup fails.
 pub const WIFI_CONNECT_ATTEMPTS: usize = 80;
-/// Number of 250 ms DHCP checks before forcing WiFi association again.
-pub const DHCP_ATTEMPTS: usize = 240;
-/// Number of 250 ms DHCP checks between progress logs.
-pub const DHCP_PROGRESS_POLLS: usize = 32;
+/// Number of association checks between explicit connect requests.
+pub const WIFI_CONNECT_RETRY_POLLS: usize = 8;
+/// Milliseconds between network polls while waiting for DHCP.
+pub const DHCP_POLL_MS: u32 = 25;
+/// Number of DHCP checks before forcing WiFi association again.
+pub const DHCP_ATTEMPTS: usize = 2_400;
+/// Number of DHCP checks between progress logs.
+pub const DHCP_PROGRESS_POLLS: usize = 320;
 /// Number of empty network polls allowed while sending one response.
 pub const HTTP_SEND_IDLE_POLLS: usize = 2_000;
-/// Number of 1 ms polls allowed while waiting for a response to drain.
-pub const HTTP_DRAIN_POLLS: usize = 5_000;
+/// Number of 1 ms polls allowed while closing one HTTP response.
+pub const HTTP_CLOSE_POLLS: usize = 2_000;
 /// Number of 10 ms polls allowed while waiting for WiFi start state.
 pub const WIFI_START_STATE_POLLS: usize = 200;
+/// Reliability-oriented ESP WiFi TX power cap, in 0.25 dBm units.
+pub const WIFI_TX_POWER_QUARTER_DBM: i8 = 60;
+
+type HttpTcpRxBuffers = [[u8; HTTP_TCP_RX_BUFFER_BYTES]; HTTP_SOCKET_COUNT];
+type HttpTcpTxBuffers = [[u8; HTTP_TCP_TX_BUFFER_BYTES]; HTTP_SOCKET_COUNT];
+type HttpRequestBuffers = [[u8; HTTP_REQUEST_BUFFER_BYTES]; HTTP_SOCKET_COUNT];
+
+static HTTP_TCP_RX_BUFFERS: StaticCell<HttpTcpRxBuffers> = StaticCell::new();
+static HTTP_TCP_TX_BUFFERS: StaticCell<HttpTcpTxBuffers> = StaticCell::new();
+static HTTP_REQUEST_BUFFERS: StaticCell<HttpRequestBuffers> = StaticCell::new();
 
 /// Error returned while starting or serving WiFi HTTP.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -248,14 +268,10 @@ where
     }
 
     wait_for_wifi_started(&controller, &delay)?;
+    configure_wifi_reliability(&mut controller, platform)?;
     delay.delay_millis(2_000);
 
-    if let Err(error) = controller.connect() {
-        esp_println::println!("WiFi: connect failed: {:?}", error);
-        return Err(WifiStartError::Controller);
-    }
-
-    wait_for_wifi(&controller, &delay, display.as_deref_mut(), ssid)?;
+    wait_for_wifi(&mut controller, &delay, display.as_deref_mut(), ssid)?;
 
     serial::write_line("WiFi: connected");
     record_diagnostic(
@@ -269,22 +285,30 @@ where
     let mut station_device = interfaces.sta;
     let mut interface = network_interface(&mut station_device, platform);
 
-    let mut tcp_rx_buffer = [0_u8; HTTP_TCP_RX_BUFFER_BYTES];
-    let mut tcp_tx_buffer = [0_u8; HTTP_TCP_TX_BUFFER_BYTES];
-    let mut socket_storage = [SocketStorage::EMPTY, SocketStorage::EMPTY];
+    let tcp_rx_buffers =
+        HTTP_TCP_RX_BUFFERS.init_with(|| [[0_u8; HTTP_TCP_RX_BUFFER_BYTES]; HTTP_SOCKET_COUNT]);
+    let tcp_tx_buffers =
+        HTTP_TCP_TX_BUFFERS.init_with(|| [[0_u8; HTTP_TCP_TX_BUFFER_BYTES]; HTTP_SOCKET_COUNT]);
+    let request_buffers =
+        HTTP_REQUEST_BUFFERS.init_with(|| [[0_u8; HTTP_REQUEST_BUFFER_BYTES]; HTTP_SOCKET_COUNT]);
+    let mut socket_storage = [SocketStorage::EMPTY; HTTP_SOCKET_COUNT + 1];
     let mut sockets = SocketSet::new(&mut socket_storage[..]);
     let mut dhcp_socket = dhcpv4::Socket::new();
     let mut retry_config = dhcp_socket.get_retry_config();
     retry_config.discover_timeout = SmoltcpDuration::from_secs(2);
+    retry_config.initial_request_timeout = SmoltcpDuration::from_secs(2);
+    retry_config.request_retries = 3;
     dhcp_socket.set_retry_config(retry_config);
     let dhcp_handle = sockets.add(dhcp_socket);
-    let tcp_rx = tcp::SocketBuffer::new(&mut tcp_rx_buffer[..]);
-    let tcp_tx = tcp::SocketBuffer::new(&mut tcp_tx_buffer[..]);
-    let mut tcp_socket = tcp::Socket::new(tcp_rx, tcp_tx);
-    tcp_socket.set_nagle_enabled(false);
-    tcp_socket.set_timeout(Some(SmoltcpDuration::from_millis(5_000)));
-    let tcp_handle = sockets.add(tcp_socket);
-    let mut request_buffer = [0_u8; HTTP_REQUEST_BUFFER_BYTES];
+    let mut http_handles = [None; HTTP_SOCKET_COUNT];
+    for (index, (rx_buffer, tx_buffer)) in tcp_rx_buffers
+        .iter_mut()
+        .zip(tcp_tx_buffers.iter_mut())
+        .enumerate()
+    {
+        http_handles[index] = Some(sockets.add(new_http_socket(rx_buffer, tx_buffer)));
+    }
+    let mut request_lens = [0_usize; HTTP_SOCKET_COUNT];
     let mut endpoint = None;
     let mut dhcp_polls = 0_usize;
     let mut reconnect_polls = 0_usize;
@@ -309,16 +333,25 @@ where
                 dhcp_polls = 0;
                 reconnect_polls = 0;
                 serving_state = GatewayRuntimeState::Provisioned;
-                clear_network_config(&mut interface, &mut sockets, dhcp_handle);
+                clear_network_config(
+                    &mut interface,
+                    &mut sockets,
+                    dhcp_handle,
+                    &http_handles,
+                    &mut request_lens,
+                );
+                let _ = configure_wifi_reliability(&mut controller, platform);
             }
 
             wifi_connected = false;
             reconnect_polls = reconnect_polls.saturating_add(1);
-            let _ = controller.connect();
+            if reconnect_polls == 1 || should_retry_wifi_connect(reconnect_polls) {
+                let _ = controller.connect();
+            }
             if let Some(display) = display.as_deref_mut() {
                 let _ = display.show_wifi_connecting(ssid, "Reconnecting", reconnect_polls as u8);
             }
-            delay.delay_millis(250);
+            delay.delay_millis(WIFI_CONNECT_POLL_MS);
             continue;
         }
 
@@ -333,6 +366,10 @@ where
                 "reconnected",
                 "WiFi station reconnected",
             );
+            sockets.get_mut::<dhcpv4::Socket>(dhcp_handle).reset();
+            reset_http_sockets(&mut sockets, &http_handles, &mut request_lens);
+            endpoint = None;
+            dhcp_polls = 0;
         }
 
         poll_network(&mut interface, &mut station_device, &mut sockets, platform);
@@ -345,6 +382,7 @@ where
         ) {
             dhcp_polls = 0;
             if endpoint != next_endpoint {
+                reset_http_sockets(&mut sockets, &http_handles, &mut request_lens);
                 endpoint = next_endpoint;
                 if let Some(endpoint) = endpoint {
                     if let Some(start_services) = before_serving.take() {
@@ -402,10 +440,14 @@ where
         if endpoint.is_none() {
             dhcp_polls = dhcp_polls.saturating_add(1);
             if let Some(display) = display.as_deref_mut() {
-                let _ = display.show_wifi_connecting(ssid, "Getting IP", dhcp_polls as u8);
+                let step = dhcp_progress_step(dhcp_polls);
+                let _ = display.show_wifi_connecting(ssid, "Getting IP", step);
             }
             if dhcp_polls % DHCP_PROGRESS_POLLS == 0 {
-                esp_println::println!("Network: still waiting for DHCP ({}s)", dhcp_polls / 4);
+                esp_println::println!(
+                    "Network: still waiting for DHCP ({}s)",
+                    poll_elapsed_seconds(dhcp_polls, DHCP_POLL_MS)
+                );
             }
             if dhcp_polls > DHCP_ATTEMPTS {
                 serial::write_line("Network: DHCP timeout; reconnecting WiFi");
@@ -417,14 +459,21 @@ where
                     "DHCP timed out; reconnecting WiFi",
                 );
                 let _ = controller.disconnect();
-                clear_network_config(&mut interface, &mut sockets, dhcp_handle);
+                clear_network_config(
+                    &mut interface,
+                    &mut sockets,
+                    dhcp_handle,
+                    &http_handles,
+                    &mut request_lens,
+                );
+                let _ = configure_wifi_reliability(&mut controller, platform);
                 wifi_connected = false;
                 endpoint = None;
                 dhcp_polls = 0;
                 delay.delay_millis(1_000);
                 continue;
             }
-            delay.delay_millis(250);
+            delay.delay_millis(DHCP_POLL_MS);
             continue;
         }
 
@@ -437,39 +486,58 @@ where
             Some(&mut *button),
         );
 
+        clear_partial_requests_if_idle(&sockets, &http_handles, &mut request_lens);
+
         ensure_listening(
             &mut sockets,
-            tcp_handle,
+            &http_handles,
             config.http.as_ref().map_or(80, |http| http.port),
         )?;
 
-        if let Some(request_len) = read_request(&mut sockets, tcp_handle, &mut request_buffer) {
-            let mut http_io = HttpSocketIo::new(
-                &mut interface,
-                &mut station_device,
+        for index in 0..HTTP_SOCKET_COUNT {
+            let Some(tcp_handle) = http_handles[index] else {
+                continue;
+            };
+            if let Some(ready_len) = read_request(
                 &mut sockets,
                 tcp_handle,
-                platform,
-                &delay,
-            );
-            match handle_http_request(
-                &mut http_io,
-                &request_buffer[..request_len],
-                config.http.as_ref(),
-                tx_power,
+                &mut request_buffers[index],
+                &mut request_lens[index],
             ) {
-                Ok(()) => {},
-                Err(error) => {
-                    esp_println::println!("HTTP: request failed ({})", error.as_str());
-                    record_diagnostic(
-                        platform.now_ms(),
-                        DiagnosticLevel::Warn,
-                        DiagnosticSubsystem::Http,
-                        "request_failed",
-                        error.as_str(),
-                    );
-                    http_io.abort();
-                },
+                let request = &request_buffers[index][..ready_len];
+                let route = http_metrics::route_request(request);
+                let mut http_io = HttpSocketIo::new(
+                    &mut interface,
+                    &mut station_device,
+                    &mut sockets,
+                    tcp_handle,
+                    platform,
+                    &delay,
+                );
+                match handle_http_request(&mut http_io, request, config.http.as_ref(), tx_power) {
+                    Ok(()) => {},
+                    Err(WifiStartError::HttpSend) => {
+                        record_diagnostic(
+                            platform.now_ms(),
+                            DiagnosticLevel::Debug,
+                            DiagnosticSubsystem::Http,
+                            "response_aborted",
+                            route.as_str(),
+                        );
+                        http_io.abort();
+                    },
+                    Err(error) => {
+                        esp_println::println!("HTTP: request failed ({})", error.as_str());
+                        record_diagnostic(
+                            platform.now_ms(),
+                            DiagnosticLevel::Warn,
+                            DiagnosticSubsystem::Http,
+                            "request_failed",
+                            error.as_str(),
+                        );
+                        http_io.abort();
+                    },
+                }
             }
         }
 
@@ -569,7 +637,7 @@ fn alloc_string(value: &str) -> Result<AllocString, WifiStartError>
 }
 
 fn wait_for_wifi(
-    controller: &esp_wifi::wifi::WifiController<'_>,
+    controller: &mut esp_wifi::wifi::WifiController<'_>,
     delay: &Delay,
     mut display: Option<&mut LocalDisplay>,
     ssid: &str,
@@ -579,13 +647,35 @@ fn wait_for_wifi(
         if matches!(controller.is_connected(), Ok(true)) {
             return Ok(());
         }
+        if should_retry_wifi_connect(attempt) {
+            if let Err(error) = controller.connect() {
+                esp_println::println!("WiFi: connect request failed: {:?}", error);
+            }
+        }
         if let Some(display) = display.as_deref_mut() {
             let _ = display.show_wifi_connecting(ssid, "Connecting", attempt as u8);
         }
-        delay.delay_millis(250);
+        delay.delay_millis(WIFI_CONNECT_POLL_MS);
     }
 
     Err(WifiStartError::ConnectTimeout)
+}
+
+fn should_retry_wifi_connect(polls: usize) -> bool
+{
+    polls == 0 || polls % WIFI_CONNECT_RETRY_POLLS == 0
+}
+
+fn dhcp_progress_step(polls: usize) -> u8
+{
+    poll_elapsed_seconds(polls, DHCP_POLL_MS)
+        .saturating_mul(4)
+        .min(u64::from(u8::MAX)) as u8
+}
+
+fn poll_elapsed_seconds(polls: usize, poll_ms: u32) -> u64
+{
+    (polls as u64).saturating_mul(u64::from(poll_ms)) / 1_000
 }
 
 fn wait_for_wifi_started(
@@ -602,6 +692,62 @@ fn wait_for_wifi_started(
 
     esp_println::println!("WiFi: start state did not become ready");
     Err(WifiStartError::Controller)
+}
+
+fn configure_wifi_reliability(
+    controller: &mut esp_wifi::wifi::WifiController<'_>,
+    platform: &Esp32Platform,
+) -> Result<(), WifiStartError>
+{
+    if let Err(error) = controller.set_power_saving(PowerSaveMode::None) {
+        esp_println::println!("WiFi: disable power save failed: {:?}", error);
+        record_diagnostic(
+            platform.now_ms(),
+            DiagnosticLevel::Warn,
+            DiagnosticSubsystem::Wifi,
+            "power_save_failed",
+            "failed to disable WiFi power saving",
+        );
+        return Err(WifiStartError::Controller);
+    }
+
+    set_wifi_tx_power_cap(platform)
+}
+
+fn set_wifi_tx_power_cap(platform: &Esp32Platform) -> Result<(), WifiStartError>
+{
+    let result =
+        unsafe { esp_wifi_sys::include::esp_wifi_set_max_tx_power(WIFI_TX_POWER_QUARTER_DBM) };
+    if result != 0 {
+        esp_println::println!("WiFi: set max TX power failed: {}", result);
+        record_diagnostic(
+            platform.now_ms(),
+            DiagnosticLevel::Warn,
+            DiagnosticSubsystem::Wifi,
+            "tx_power_failed",
+            "failed to set WiFi max TX power",
+        );
+        return Err(WifiStartError::Controller);
+    }
+
+    let mut applied = 0_i8;
+    let result = unsafe { esp_wifi_sys::include::esp_wifi_get_max_tx_power(&mut applied) };
+    if result == 0 {
+        esp_println::println!(
+            "WiFi: TX power cap requested={} applied={} (0.25 dBm units)",
+            WIFI_TX_POWER_QUARTER_DBM,
+            applied,
+        );
+        record_diagnostic(
+            platform.now_ms(),
+            DiagnosticLevel::Info,
+            DiagnosticSubsystem::Wifi,
+            "tx_power_cap",
+            "WiFi TX power cap requested",
+        );
+    }
+
+    Ok(())
 }
 
 fn install_wifi_event_logging()
@@ -628,14 +774,20 @@ fn wifi_disconnect_reason(code: u8) -> &'static str
         19 => "PAIRWISE_CIPHER_INVALID",
         20 => "AKMP_INVALID",
         23 => "802_1X_AUTH_FAILED",
+        39 => "TIMEOUT",
+        46 => "PEER_INITIATED",
+        47 => "AP_INITIATED",
         200 => "BEACON_TIMEOUT",
         201 => "NO_AP_FOUND",
         202 => "AUTH_FAIL",
         203 => "ASSOC_FAIL",
         204 => "HANDSHAKE_TIMEOUT",
         205 => "CONNECTION_FAIL",
+        206 => "AP_TSF_RESET",
+        207 => "ROAMING",
         210 => "NO_AP_FOUND_COMPATIBLE_SECURITY",
         211 => "NO_AP_FOUND_IN_AUTHMODE_THRESHOLD",
+        212 => "NO_AP_FOUND_IN_RSSI_THRESHOLD",
         _ => "OTHER",
     }
 }
@@ -658,15 +810,32 @@ fn poll_network(
     let _ = interface.poll(smoltcp_now(platform), device, sockets);
 }
 
+fn new_http_socket<'buffer>(
+    rx_buffer: &'buffer mut [u8; HTTP_TCP_RX_BUFFER_BYTES],
+    tx_buffer: &'buffer mut [u8; HTTP_TCP_TX_BUFFER_BYTES],
+) -> tcp::Socket<'buffer>
+{
+    let tcp_rx = tcp::SocketBuffer::new(&mut rx_buffer[..]);
+    let tcp_tx = tcp::SocketBuffer::new(&mut tx_buffer[..]);
+    let mut socket = tcp::Socket::new(tcp_rx, tcp_tx);
+    socket.set_nagle_enabled(false);
+    socket.set_timeout(Some(SmoltcpDuration::from_millis(5_000)));
+    socket.set_keep_alive(Some(SmoltcpDuration::from_millis(5_000)));
+    socket
+}
+
 fn clear_network_config(
     interface: &mut Interface,
     sockets: &mut SocketSet<'_>,
     dhcp_handle: SocketHandle,
+    http_handles: &[Option<SocketHandle>],
+    request_lens: &mut [usize],
 )
 {
     interface.update_ip_addrs(|addrs| addrs.clear());
     let _ = interface.routes_mut().remove_default_ipv4_route();
     sockets.get_mut::<dhcpv4::Socket>(dhcp_handle).reset();
+    reset_http_sockets(sockets, http_handles, request_lens);
 }
 
 fn poll_dhcp(
@@ -703,23 +872,66 @@ fn poll_dhcp(
 
 fn ensure_listening(
     sockets: &mut SocketSet<'_>,
-    tcp_handle: SocketHandle,
+    http_handles: &[Option<SocketHandle>],
     port: u16,
 ) -> Result<(), WifiStartError>
 {
-    let socket = sockets.get_mut::<tcp::Socket>(tcp_handle);
-    if !socket.is_open() {
-        socket
-            .listen(port)
-            .map_err(|_| WifiStartError::HttpListen)?;
+    for maybe_handle in http_handles {
+        let Some(tcp_handle) = *maybe_handle else {
+            continue;
+        };
+        let socket = sockets.get_mut::<tcp::Socket>(tcp_handle);
+        if !socket.is_open() {
+            socket
+                .listen(port)
+                .map_err(|_| WifiStartError::HttpListen)?;
+        }
     }
     Ok(())
+}
+
+fn reset_http_sockets(
+    sockets: &mut SocketSet<'_>,
+    http_handles: &[Option<SocketHandle>],
+    request_lens: &mut [usize],
+)
+{
+    request_lens.fill(0);
+    for maybe_handle in http_handles {
+        let Some(tcp_handle) = *maybe_handle else {
+            continue;
+        };
+        sockets.get_mut::<tcp::Socket>(tcp_handle).abort();
+    }
+}
+
+fn clear_partial_requests_if_idle(
+    sockets: &SocketSet<'_>,
+    http_handles: &[Option<SocketHandle>],
+    request_lens: &mut [usize],
+)
+{
+    for (maybe_handle, request_len) in http_handles.iter().zip(request_lens.iter_mut()) {
+        if *request_len == 0 {
+            continue;
+        }
+
+        let Some(tcp_handle) = *maybe_handle else {
+            *request_len = 0;
+            continue;
+        };
+        let socket = sockets.get::<tcp::Socket>(tcp_handle);
+        if !socket.is_active() {
+            *request_len = 0;
+        }
+    }
 }
 
 fn read_request(
     sockets: &mut SocketSet<'_>,
     tcp_handle: SocketHandle,
     request_buffer: &mut [u8; HTTP_REQUEST_BUFFER_BYTES],
+    request_len: &mut usize,
 ) -> Option<usize>
 {
     let socket = sockets.get_mut::<tcp::Socket>(tcp_handle);
@@ -727,13 +939,28 @@ fn read_request(
         return None;
     }
 
-    socket
+    let remaining = request_buffer.len().saturating_sub(*request_len);
+    let copied = socket
         .recv(|data| {
-            let request_len = min(data.len(), request_buffer.len());
-            request_buffer[..request_len].copy_from_slice(&data[..request_len]);
-            (data.len(), request_len)
+            let copy_len = min(data.len(), remaining);
+            let end = (*request_len).saturating_add(copy_len);
+            request_buffer[*request_len..end].copy_from_slice(&data[..copy_len]);
+            (data.len(), copy_len)
         })
-        .ok()
+        .ok()?;
+
+    *request_len = (*request_len).saturating_add(copied);
+
+    if http_metrics::request_headers_complete(&request_buffer[..*request_len])
+        || *request_len == request_buffer.len()
+        || !sockets.get::<tcp::Socket>(tcp_handle).may_recv()
+    {
+        let ready_len = *request_len;
+        *request_len = 0;
+        Some(ready_len)
+    } else {
+        None
+    }
 }
 
 fn send_all(
@@ -790,10 +1017,9 @@ fn finish_response(
     delay: &Delay,
 ) -> Result<(), WifiStartError>
 {
-    drain_tx_queue(interface, device, sockets, tcp_handle, platform, delay)?;
     sockets.get_mut::<tcp::Socket>(tcp_handle).close();
 
-    for _ in 0..HTTP_DRAIN_POLLS {
+    for _ in 0..HTTP_CLOSE_POLLS {
         poll_network(interface, device, sockets, platform);
         let socket_open = sockets.get_mut::<tcp::Socket>(tcp_handle).is_open();
         if !socket_open {
@@ -804,30 +1030,6 @@ fn finish_response(
 
     sockets.get_mut::<tcp::Socket>(tcp_handle).abort();
     Ok(())
-}
-
-fn drain_tx_queue(
-    interface: &mut Interface,
-    device: &mut WifiDevice<'_>,
-    sockets: &mut SocketSet<'_>,
-    tcp_handle: SocketHandle,
-    platform: &Esp32Platform,
-    delay: &Delay,
-) -> Result<(), WifiStartError>
-{
-    for _ in 0..HTTP_DRAIN_POLLS {
-        poll_network(interface, device, sockets, platform);
-        let socket = sockets.get_mut::<tcp::Socket>(tcp_handle);
-        if socket.send_queue() == 0 {
-            return Ok(());
-        }
-        if !socket.may_send() {
-            return Err(WifiStartError::HttpSend);
-        }
-        delay.delay_millis(1);
-    }
-
-    Err(WifiStartError::HttpSend)
 }
 
 fn smoltcp_now(platform: &Esp32Platform) -> SmoltcpInstant

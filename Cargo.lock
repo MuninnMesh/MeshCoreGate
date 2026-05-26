@@ -1432,6 +1432,7 @@ dependencies = [
  "esp-println",
  "esp-rom-sys",
  "esp-wifi",
+ "esp-wifi-sys",
  "heapless 0.8.0",
  "muninn-gate-core",
  "muninn-gate-ui",

@@ -406,9 +406,9 @@ pub enum TelemetryRoute
     /// Poll the producer directly.
     #[default]
     Direct,
-    /// Poll by flooding when direct routing is not suitable.
+    /// Legacy value accepted by older configs; firmware normalizes it to direct.
     Flood,
-    /// Use an explicit route/path.
+    /// Legacy value accepted by older configs; firmware normalizes it to direct.
     Path(TelemetryProducerPath),
 }
 

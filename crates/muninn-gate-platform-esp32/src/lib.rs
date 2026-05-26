@@ -51,7 +51,6 @@ use muninn_gate_core::{
     GatewayRuntimeError,
     GatewayRuntimeState,
     ServingInterfaces,
-    TelemetryRoute,
     TxPowerMapping,
 };
 use muninn_mesh_radio::MeshRadioConfig;
@@ -449,11 +448,7 @@ fn print_config_summary<V>(
         } else {
             "<none>"
         };
-        let route = match &producer.route {
-            TelemetryRoute::Direct => "direct",
-            TelemetryRoute::Flood => "flood",
-            TelemetryRoute::Path(path) => path.as_str(),
-        };
+        let route = "direct";
         esp_println::println!(
             "Config: producer[{}] kind={} enabled={} name=\"{}\" public_key={} password={} \
              interval={}s route={}",

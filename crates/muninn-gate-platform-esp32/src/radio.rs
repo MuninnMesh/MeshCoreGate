@@ -56,6 +56,12 @@ pub const RADIO_AIRTIME_BUDGET_FACTOR: u32 = 2;
 pub const RADIO_TX_QUEUE_LEN: usize = 8;
 /// Number of received LoRa frames retained for the MeshCore adapter.
 pub const RADIO_RX_QUEUE_LEN: usize = 8;
+/// MeshCore route bits in the first payload byte.
+pub const MESHCORE_ROUTE_MASK: u8 = 0x03;
+/// MeshCore zero-hop direct route bits.
+pub const MESHCORE_ROUTE_DIRECT: u8 = 0x02;
+/// MeshCore transport direct route bits.
+pub const MESHCORE_ROUTE_TRANSPORT_DIRECT: u8 = 0x03;
 /// Heltec V4.x VBAT divider top resistor in ohms.
 pub const HELTEC_V4_BATTERY_DIVIDER_TOP_OHMS: u32 = 390_000;
 /// Heltec V4.x VBAT divider bottom resistor in ohms.
@@ -154,6 +160,8 @@ pub enum RadioQueueError
 {
     /// The selected fixed-capacity queue is full.
     Full,
+    /// The frame was not direct-routed and was refused before radio TX.
+    NonDirectRoute,
 }
 
 /// Build the board radio configuration from gateway configuration.
@@ -204,12 +212,27 @@ pub fn radio_ready() -> bool
 /// Queue a MeshCore frame for serialized radio transmission.
 pub fn enqueue_tx_frame(frame: MeshTxFrame) -> Result<(), RadioQueueError>
 {
+    if !tx_frame_uses_direct_route(&frame) {
+        return Err(RadioQueueError::NonDirectRoute);
+    }
+
     critical_section::with(|cs| {
         RADIO_TX_QUEUE
             .borrow_ref_mut(cs)
             .push_back(frame)
             .map_err(|_| RadioQueueError::Full)
     })
+}
+
+fn tx_frame_uses_direct_route(frame: &MeshTxFrame) -> bool
+{
+    let Some(header) = frame.payload_slice().first() else {
+        return false;
+    };
+    matches!(
+        header & MESHCORE_ROUTE_MASK,
+        MESHCORE_ROUTE_DIRECT | MESHCORE_ROUTE_TRANSPORT_DIRECT
+    )
 }
 
 /// Return the next received radio frame, when available.

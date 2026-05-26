@@ -498,12 +498,10 @@ fn parse_display_value(value: &str) -> Result<DisplayTelemetryValue, Provisionin
 fn parse_route(value: &str) -> Result<TelemetryRoute, ProvisioningError>
 {
     match value {
-        "direct" => Ok(TelemetryRoute::Direct),
-        "flood" => Ok(TelemetryRoute::Flood),
         "" => Err(ProvisioningError::InvalidConfig),
-        path => Ok(TelemetryRoute::Path(
-            fixed_string(path).map_err(|_| ProvisioningError::InvalidConfig)?,
-        )),
+        // The firmware accepts legacy route strings but normalizes all outbound
+        // MeshCore traffic to zero-hop direct packets.
+        _ => Ok(TelemetryRoute::Direct),
     }
 }
 
