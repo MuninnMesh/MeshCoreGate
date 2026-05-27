@@ -1,8 +1,9 @@
 //! ESP32 MeshCore adapter backed by the radio owner queues.
 //!
-//! This module keeps the scheduler side independent from the SX126x owner task.
-//! The APP CPU owns the SX126x and this module only talks to it through fixed
-//! TX/RX queues. Active polling follows the official MeshCore firmware flow:
+//! This module keeps the scheduler side independent from the SX126x owner. The
+//! current ESP32 reliability path services that owner cooperatively from the
+//! WiFi/HTTP loop and only talks to it through fixed TX/RX queues. Active
+//! polling follows the official MeshCore firmware flow:
 //! companion nodes receive encrypted telemetry requests directly, while
 //! repeaters receive a login request before the telemetry request.
 
@@ -139,13 +140,14 @@ pub fn queue_startup_advert(config: &GatewayConfig<MAX_TELEMETRY_PRODUCERS>, now
     }
 }
 
-/// MeshCore client that observes frames received by the APP CPU radio owner.
+/// MeshCore client that observes frames received by the radio owner.
 pub struct RadioMeshcoreClient<'a>
 {
-    config:   &'a GatewayConfig<MAX_TELEMETRY_PRODUCERS>,
-    identity: Result<MeshcoreIdentity, PollFailureReason>,
-    now_ms:   u64,
-    progress: Option<PollProgressDisplay<'a>>,
+    config:      &'a GatewayConfig<MAX_TELEMETRY_PRODUCERS>,
+    identity:    Result<MeshcoreIdentity, PollFailureReason>,
+    now_ms:      u64,
+    progress:    Option<PollProgressDisplay<'a>>,
+    maintenance: Option<&'a mut dyn FnMut()>,
 }
 
 impl<'a> RadioMeshcoreClient<'a>
@@ -158,6 +160,7 @@ impl<'a> RadioMeshcoreClient<'a>
             identity: gateway_identity(config),
             now_ms,
             progress: None,
+            maintenance: None,
         }
     }
 
@@ -182,6 +185,14 @@ impl<'a> RadioMeshcoreClient<'a>
     pub fn set_now_ms(&mut self, now_ms: u64)
     {
         self.now_ms = now_ms;
+    }
+
+    /// Attach cooperative work that must continue while MeshCore waits.
+    pub fn set_network_maintenance<M>(&mut self, maintenance: &'a mut M)
+    where
+        M: FnMut() + 'a,
+    {
+        self.maintenance = Some(maintenance);
     }
 
     /// Run the blocking request/response poll used by the synchronous scheduler.
@@ -283,7 +294,7 @@ impl<'a> RadioMeshcoreClient<'a>
                     },
                 }
             }
-            delay.delay_millis(MESHCORE_RESPONSE_WAIT_STEP_MS);
+            self.maintenance_delay(&delay);
         }
 
         let reason =
@@ -348,7 +359,7 @@ impl<'a> RadioMeshcoreClient<'a>
                     },
                 }
             }
-            delay.delay_millis(MESHCORE_RESPONSE_WAIT_STEP_MS);
+            self.maintenance_delay(&delay);
         }
 
         let reason =
@@ -372,6 +383,16 @@ impl<'a> RadioMeshcoreClient<'a>
             return;
         };
         progress.render(self.config, producer_id, now_ms);
+    }
+
+    fn maintenance_delay(&mut self, delay: &Delay)
+    {
+        for _ in 0..MESHCORE_RESPONSE_WAIT_STEP_MS {
+            if let Some(maintenance) = self.maintenance.as_deref_mut() {
+                maintenance();
+            }
+            delay.delay_millis(1);
+        }
     }
 }
 

@@ -10,6 +10,7 @@ use muninn_gate_core::{
     FixedTelemetryStore,
     GatewayConfig,
     GatewayMetrics,
+    HttpSocketStateSnapshot,
     PollFailureReason,
     PollTelemetryStore,
     ProducerTelemetry,
@@ -203,6 +204,386 @@ pub fn record_poll_pass(retrying: u32, poll_on_demand_requests: u32, latency_ms:
     });
 }
 
+/// Record one accepted HTTP request.
+pub fn record_http_request(now_ms: u64)
+{
+    critical_section::with(|cs| {
+        let mut store = TELEMETRY_STORE.borrow_ref_mut(cs);
+        let metrics = store.gateway_metrics_mut();
+        metrics.http_requests_total = metrics.http_requests_total.saturating_add(1);
+        metrics.last_http_request_ms = Some(now_ms);
+    });
+}
+
+/// Record one completed HTTP response.
+pub fn record_http_success(now_ms: u64)
+{
+    critical_section::with(|cs| {
+        let mut store = TELEMETRY_STORE.borrow_ref_mut(cs);
+        let metrics = store.gateway_metrics_mut();
+        metrics.http_success_total = metrics.http_success_total.saturating_add(1);
+        metrics.last_http_success_ms = Some(now_ms);
+    });
+}
+
+/// Record an HTTP send failure.
+pub fn record_http_send_error()
+{
+    critical_section::with(|cs| {
+        let mut store = TELEMETRY_STORE.borrow_ref_mut(cs);
+        let metrics = store.gateway_metrics_mut();
+        metrics.http_send_error_total = metrics.http_send_error_total.saturating_add(1);
+    });
+}
+
+/// Record explicitly aborted HTTP sockets.
+pub fn record_http_socket_aborts(count: u8)
+{
+    if count == 0 {
+        return;
+    }
+
+    critical_section::with(|cs| {
+        let mut store = TELEMETRY_STORE.borrow_ref_mut(cs);
+        let metrics = store.gateway_metrics_mut();
+        metrics.http_socket_abort_total = metrics
+            .http_socket_abort_total
+            .saturating_add(u64::from(count));
+    });
+}
+
+/// Publish the current HTTP socket pool state.
+pub fn record_http_socket_state(active: u8, listening: u8)
+{
+    critical_section::with(|cs| {
+        let mut store = TELEMETRY_STORE.borrow_ref_mut(cs);
+        let metrics = store.gateway_metrics_mut();
+        metrics.http_active_sockets = active;
+        metrics.http_listening_sockets = listening;
+    });
+}
+
+/// Publish the current HTTP socket pool state.
+pub fn record_http_socket_states(states: HttpSocketStateSnapshot)
+{
+    critical_section::with(|cs| {
+        let mut store = TELEMETRY_STORE.borrow_ref_mut(cs);
+        let metrics = store.gateway_metrics_mut();
+        metrics.http_active_sockets = states.active;
+        metrics.http_listening_sockets = states.listening;
+        metrics.http_closed_sockets = states.closed;
+        metrics.http_syn_sent_sockets = states.syn_sent;
+        metrics.http_syn_received_sockets = states.syn_received;
+        metrics.http_established_sockets = states.established;
+        metrics.http_fin_wait_1_sockets = states.fin_wait_1;
+        metrics.http_fin_wait_2_sockets = states.fin_wait_2;
+        metrics.http_close_wait_sockets = states.close_wait;
+        metrics.http_closing_sockets = states.closing;
+        metrics.http_last_ack_sockets = states.last_ack;
+        metrics.http_time_wait_sockets = states.time_wait;
+        metrics.http_oldest_socket_age_ms = states.oldest_socket_age_ms;
+        metrics.http_oldest_syn_sent_ms = states.oldest_syn_sent_ms;
+        metrics.http_oldest_syn_received_ms = states.oldest_syn_received_ms;
+        metrics.http_oldest_established_ms = states.oldest_established_ms;
+        metrics.http_oldest_fin_wait_1_ms = states.oldest_fin_wait_1_ms;
+        metrics.http_oldest_fin_wait_2_ms = states.oldest_fin_wait_2_ms;
+        metrics.http_oldest_close_wait_ms = states.oldest_close_wait_ms;
+        metrics.http_oldest_closing_ms = states.oldest_closing_ms;
+        metrics.http_oldest_last_ack_ms = states.oldest_last_ack_ms;
+        metrics.http_oldest_time_wait_ms = states.oldest_time_wait_ms;
+    });
+}
+
+/// Record the start of a network startup/recovery attempt.
+pub fn record_network_started(now_ms: u64)
+{
+    critical_section::with(|cs| {
+        let mut store = TELEMETRY_STORE.borrow_ref_mut(cs);
+        let metrics = store.gateway_metrics_mut();
+        metrics.network_started_ms = Some(now_ms);
+        metrics.http_serving_started_ms = None;
+        metrics.network_startup_to_serving_ms = None;
+    });
+}
+
+/// Record whether WiFi is currently associated.
+pub fn record_wifi_connected(connected: bool)
+{
+    critical_section::with(|cs| {
+        TELEMETRY_STORE
+            .borrow_ref_mut(cs)
+            .gateway_metrics_mut()
+            .wifi_connected = connected;
+    });
+}
+
+/// Record that a WiFi connect request is about to be issued.
+pub fn record_wifi_connect_started(now_ms: u64)
+{
+    critical_section::with(|cs| {
+        TELEMETRY_STORE
+            .borrow_ref_mut(cs)
+            .gateway_metrics_mut()
+            .wifi_connect_started_ms = Some(now_ms);
+    });
+}
+
+/// Record that WiFi has reached associated state.
+pub fn record_wifi_connected_at(now_ms: u64)
+{
+    critical_section::with(|cs| {
+        let mut store = TELEMETRY_STORE.borrow_ref_mut(cs);
+        let metrics = store.gateway_metrics_mut();
+        metrics.wifi_connected = true;
+        metrics.wifi_connected_ms = Some(now_ms);
+    });
+}
+
+/// Record one or more WiFi disconnect events observed by the ESP-IDF event hook.
+pub fn record_wifi_disconnects(count: u32, reason: Option<u8>)
+{
+    if count == 0 {
+        return;
+    }
+
+    critical_section::with(|cs| {
+        let mut store = TELEMETRY_STORE.borrow_ref_mut(cs);
+        let metrics = store.gateway_metrics_mut();
+        metrics.wifi_connected = false;
+        metrics.wifi_disconnect_total = metrics
+            .wifi_disconnect_total
+            .saturating_add(u64::from(count));
+        metrics.wifi_last_disconnect_reason = reason;
+    });
+}
+
+/// Record one WiFi connect request and whether the request failed immediately.
+pub fn record_wifi_connect_request(failed: bool)
+{
+    critical_section::with(|cs| {
+        let mut store = TELEMETRY_STORE.borrow_ref_mut(cs);
+        let metrics = store.gateway_metrics_mut();
+        metrics.wifi_connect_request_total = metrics.wifi_connect_request_total.saturating_add(1);
+        if failed {
+            metrics.wifi_connect_request_error_total =
+                metrics.wifi_connect_request_error_total.saturating_add(1);
+        }
+    });
+}
+
+/// Record one WiFi controller deep-recovery action.
+pub fn record_wifi_deep_recovery()
+{
+    critical_section::with(|cs| {
+        let mut store = TELEMETRY_STORE.borrow_ref_mut(cs);
+        let metrics = store.gateway_metrics_mut();
+        metrics.wifi_deep_recovery_total = metrics.wifi_deep_recovery_total.saturating_add(1);
+    });
+}
+
+/// Publish the latest associated AP information.
+pub fn record_wifi_ap_info(rssi_dbm: i16, channel: u8, bssid: [u8; 6], auth_mode: Option<u8>)
+{
+    critical_section::with(|cs| {
+        let mut store = TELEMETRY_STORE.borrow_ref_mut(cs);
+        let metrics = store.gateway_metrics_mut();
+        metrics.wifi_connected = true;
+        metrics.wifi_rssi_dbm = Some(rssi_dbm);
+        metrics.wifi_channel = Some(channel);
+        metrics.wifi_bssid = Some(bssid);
+        metrics.wifi_auth_mode = auth_mode;
+    });
+}
+
+/// Publish requested and applied ESP WiFi TX power caps.
+pub fn record_wifi_tx_power(requested_quarter_dbm: i8, applied_quarter_dbm: i8)
+{
+    critical_section::with(|cs| {
+        let mut store = TELEMETRY_STORE.borrow_ref_mut(cs);
+        let metrics = store.gateway_metrics_mut();
+        metrics.wifi_tx_power_requested_quarter_dbm = Some(requested_quarter_dbm);
+        metrics.wifi_tx_power_applied_quarter_dbm = Some(applied_quarter_dbm);
+    });
+}
+
+/// Record one DHCP state-machine reset.
+pub fn record_dhcp_reset()
+{
+    critical_section::with(|cs| {
+        let mut store = TELEMETRY_STORE.borrow_ref_mut(cs);
+        let metrics = store.gateway_metrics_mut();
+        metrics.dhcp_configured = false;
+        metrics.dhcp_reset_total = metrics.dhcp_reset_total.saturating_add(1);
+    });
+}
+
+/// Record the start of DHCP acquisition.
+pub fn record_dhcp_started(now_ms: u64)
+{
+    critical_section::with(|cs| {
+        let mut store = TELEMETRY_STORE.borrow_ref_mut(cs);
+        let metrics = store.gateway_metrics_mut();
+        metrics.dhcp_started_ms = Some(now_ms);
+        metrics.dhcp_configured_ms = None;
+        metrics.dhcp_configured = false;
+    });
+}
+
+/// Record a DHCP IPv4 lease.
+pub fn record_dhcp_configured(
+    configured_ms: u64,
+    acquire_ms: u32,
+    ip: [u8; 4],
+    gateway: Option<[u8; 4]>,
+)
+{
+    critical_section::with(|cs| {
+        let mut store = TELEMETRY_STORE.borrow_ref_mut(cs);
+        let metrics = store.gateway_metrics_mut();
+        metrics.dhcp_configured = true;
+        metrics.dhcp_configured_ms = Some(configured_ms);
+        metrics.dhcp_configured_total = metrics.dhcp_configured_total.saturating_add(1);
+        metrics.dhcp_last_acquire_ms = Some(acquire_ms);
+        metrics.dhcp_ip = Some(ip);
+        metrics.dhcp_gateway = gateway;
+    });
+}
+
+/// Record loss of DHCP IPv4 configuration.
+pub fn record_dhcp_deconfigured()
+{
+    critical_section::with(|cs| {
+        let mut store = TELEMETRY_STORE.borrow_ref_mut(cs);
+        let metrics = store.gateway_metrics_mut();
+        metrics.dhcp_configured = false;
+        metrics.dhcp_deconfigured_total = metrics.dhcp_deconfigured_total.saturating_add(1);
+        metrics.dhcp_ip = None;
+        metrics.dhcp_gateway = None;
+    });
+}
+
+/// Record that HTTP has begun serving for the current network startup.
+pub fn record_http_serving_started(now_ms: u64)
+{
+    critical_section::with(|cs| {
+        let mut store = TELEMETRY_STORE.borrow_ref_mut(cs);
+        let metrics = store.gateway_metrics_mut();
+        metrics.http_serving_started_ms = Some(now_ms);
+        metrics.network_startup_to_serving_ms = metrics
+            .network_started_ms
+            .map(|started_ms| now_ms.saturating_sub(started_ms).min(u64::from(u32::MAX)) as u32);
+    });
+}
+
+/// Record one DHCP timeout.
+pub fn record_dhcp_timeout()
+{
+    critical_section::with(|cs| {
+        let mut store = TELEMETRY_STORE.borrow_ref_mut(cs);
+        let metrics = store.gateway_metrics_mut();
+        metrics.dhcp_configured = false;
+        metrics.dhcp_timeout_total = metrics.dhcp_timeout_total.saturating_add(1);
+    });
+}
+
+/// Record one smoltcp interface poll and its gap from the previous poll.
+pub fn record_smoltcp_poll(now_ms: u64, gap_ms: Option<u32>, delay_missed: bool, bad_gap: bool)
+{
+    critical_section::with(|cs| {
+        let mut store = TELEMETRY_STORE.borrow_ref_mut(cs);
+        let metrics = store.gateway_metrics_mut();
+        if let Some(gap_ms) = gap_ms {
+            metrics.smoltcp_poll_gap_max_ms = metrics.smoltcp_poll_gap_max_ms.max(gap_ms);
+        }
+        if delay_missed {
+            metrics.smoltcp_poll_delay_miss_total =
+                metrics.smoltcp_poll_delay_miss_total.saturating_add(1);
+        }
+        if bad_gap {
+            metrics.smoltcp_poll_bad_gap_total =
+                metrics.smoltcp_poll_bad_gap_total.saturating_add(1);
+        }
+        metrics.last_smoltcp_poll_ms = Some(now_ms);
+        metrics.smoltcp_poll_total = metrics.smoltcp_poll_total.saturating_add(1);
+    });
+}
+
+/// Record one firmware-forced network recovery action.
+pub fn record_network_recovery()
+{
+    critical_section::with(|cs| {
+        let mut store = TELEMETRY_STORE.borrow_ref_mut(cs);
+        let metrics = store.gateway_metrics_mut();
+        metrics.network_recovery_total = metrics.network_recovery_total.saturating_add(1);
+    });
+}
+
+/// Record a main-loop scheduling gap.
+pub fn record_main_loop_gap(gap_ms: u32)
+{
+    critical_section::with(|cs| {
+        let mut store = TELEMETRY_STORE.borrow_ref_mut(cs);
+        let metrics = store.gateway_metrics_mut();
+        metrics.main_loop_gap_last_ms = gap_ms;
+        metrics.main_loop_gap_max_ms = metrics.main_loop_gap_max_ms.max(gap_ms);
+    });
+}
+
+/// Record a scheduler tick duration.
+pub fn record_scheduler_tick(duration_ms: u32)
+{
+    critical_section::with(|cs| {
+        let mut store = TELEMETRY_STORE.borrow_ref_mut(cs);
+        let metrics = store.gateway_metrics_mut();
+        metrics.scheduler_tick_last_ms = duration_ms;
+        metrics.scheduler_tick_max_ms = metrics.scheduler_tick_max_ms.max(duration_ms);
+    });
+}
+
+/// Record a cooperative LoRa service pass duration.
+pub fn record_lora_service(duration_ms: u32)
+{
+    critical_section::with(|cs| {
+        let mut store = TELEMETRY_STORE.borrow_ref_mut(cs);
+        let metrics = store.gateway_metrics_mut();
+        metrics.lora_service_last_ms = duration_ms;
+        metrics.lora_service_max_ms = metrics.lora_service_max_ms.max(duration_ms);
+    });
+}
+
+/// Record an HTTP service pass duration.
+pub fn record_http_service(duration_ms: u32)
+{
+    critical_section::with(|cs| {
+        let mut store = TELEMETRY_STORE.borrow_ref_mut(cs);
+        let metrics = store.gateway_metrics_mut();
+        metrics.http_service_last_ms = duration_ms;
+        metrics.http_service_max_ms = metrics.http_service_max_ms.max(duration_ms);
+    });
+}
+
+/// Record a display refresh duration.
+pub fn record_display_refresh(duration_ms: u32)
+{
+    critical_section::with(|cs| {
+        let mut store = TELEMETRY_STORE.borrow_ref_mut(cs);
+        let metrics = store.gateway_metrics_mut();
+        metrics.display_refresh_last_ms = duration_ms;
+        metrics.display_refresh_max_ms = metrics.display_refresh_max_ms.max(duration_ms);
+    });
+}
+
+/// Record a serial output duration.
+pub fn record_serial_emit(duration_ms: u32)
+{
+    critical_section::with(|cs| {
+        let mut store = TELEMETRY_STORE.borrow_ref_mut(cs);
+        let metrics = store.gateway_metrics_mut();
+        metrics.serial_emit_last_ms = duration_ms;
+        metrics.serial_emit_max_ms = metrics.serial_emit_max_ms.max(duration_ms);
+    });
+}
+
 /// Return a copy of the current telemetry snapshot.
 pub fn snapshot() -> TelemetrySnapshot<ESP32_TELEMETRY_PRODUCER_LIMIT>
 {
@@ -239,6 +620,79 @@ fn initial_gateway_metrics(now_ms: u64, tx_power: TxPowerMapping) -> GatewayMetr
         battery_percent: battery_voltage_mv.map(battery_percent_from_mv),
         last_poll_latency_ms: None,
         avg_poll_latency_ms: None,
+        wifi_connected: false,
+        wifi_connect_started_ms: None,
+        wifi_connected_ms: None,
+        wifi_disconnect_total: 0,
+        wifi_last_disconnect_reason: None,
+        wifi_connect_request_total: 0,
+        wifi_connect_request_error_total: 0,
+        wifi_deep_recovery_total: 0,
+        wifi_rssi_dbm: None,
+        wifi_channel: None,
+        wifi_bssid: None,
+        wifi_auth_mode: None,
+        wifi_tx_power_requested_quarter_dbm: None,
+        wifi_tx_power_applied_quarter_dbm: None,
+        dhcp_configured: false,
+        dhcp_started_ms: None,
+        dhcp_configured_ms: None,
+        dhcp_configured_total: 0,
+        dhcp_deconfigured_total: 0,
+        dhcp_reset_total: 0,
+        dhcp_timeout_total: 0,
+        dhcp_last_acquire_ms: None,
+        dhcp_ip: None,
+        dhcp_gateway: None,
+        network_started_ms: None,
+        http_serving_started_ms: None,
+        network_startup_to_serving_ms: None,
+        smoltcp_poll_total: 0,
+        last_smoltcp_poll_ms: None,
+        smoltcp_poll_gap_max_ms: 0,
+        smoltcp_poll_delay_miss_total: 0,
+        smoltcp_poll_bad_gap_total: 0,
+        http_requests_total: 0,
+        http_success_total: 0,
+        http_send_error_total: 0,
+        http_socket_abort_total: 0,
+        http_active_sockets: 0,
+        http_listening_sockets: 0,
+        http_closed_sockets: 0,
+        http_syn_sent_sockets: 0,
+        http_syn_received_sockets: 0,
+        http_established_sockets: 0,
+        http_fin_wait_1_sockets: 0,
+        http_fin_wait_2_sockets: 0,
+        http_close_wait_sockets: 0,
+        http_closing_sockets: 0,
+        http_last_ack_sockets: 0,
+        http_time_wait_sockets: 0,
+        http_oldest_socket_age_ms: None,
+        http_oldest_syn_sent_ms: None,
+        http_oldest_syn_received_ms: None,
+        http_oldest_established_ms: None,
+        http_oldest_fin_wait_1_ms: None,
+        http_oldest_fin_wait_2_ms: None,
+        http_oldest_close_wait_ms: None,
+        http_oldest_closing_ms: None,
+        http_oldest_last_ack_ms: None,
+        http_oldest_time_wait_ms: None,
+        last_http_request_ms: None,
+        last_http_success_ms: None,
+        network_recovery_total: 0,
+        main_loop_gap_last_ms: 0,
+        main_loop_gap_max_ms: 0,
+        scheduler_tick_last_ms: 0,
+        scheduler_tick_max_ms: 0,
+        lora_service_last_ms: 0,
+        lora_service_max_ms: 0,
+        http_service_last_ms: 0,
+        http_service_max_ms: 0,
+        display_refresh_last_ms: 0,
+        display_refresh_max_ms: 0,
+        serial_emit_last_ms: 0,
+        serial_emit_max_ms: 0,
         free_heap_bytes: platform::free_heap_bytes(),
         diagnostic_events: 0,
         diagnostic_dropped: 0,

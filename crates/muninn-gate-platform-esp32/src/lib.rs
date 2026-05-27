@@ -26,7 +26,7 @@ pub mod platform;
 pub mod poll_control;
 /// ESP32 USB provisioning parser.
 pub mod provisioning;
-/// ESP32 radio configuration and owner-task hooks.
+/// ESP32 radio configuration and cooperative owner hooks.
 pub mod radio;
 /// ESP32 scheduler runtime integration.
 pub mod scheduler;
@@ -41,6 +41,7 @@ pub mod wifi;
 
 use esp_hal::delay::Delay;
 use muninn_gate_core::config::MAX_TELEMETRY_PRODUCERS;
+use muninn_gate_core::output::serial_json_enabled;
 use muninn_gate_core::{
     Clock,
     DiagnosticLevel,
@@ -83,6 +84,19 @@ pub const USB_CONFIG_UPLOAD_IDLE_TIMEOUT_MS: u64 = 2_000;
 pub const USB_CONFIG_UPDATE_WINDOW_MS: u64 = 5_000;
 /// Interval between provisioning-ready markers while the USB window is open.
 pub const USB_CONFIG_READY_INTERVAL_MS: u64 = 1_000;
+/// Whether to start the LoRa/MeshCore owner.
+pub const START_RADIO_OWNER: bool = true;
+/// Delay the first automatic scheduled producer poll after boot.
+///
+/// This keeps WiFi association, DHCP, and initial HTTP serving from competing
+/// with LoRa request/response airtime during the demo-critical first minute.
+/// Operators can still force an immediate poll through `/poll` or the button.
+pub const INITIAL_SCHEDULE_DELAY_MS: u64 = 60_000;
+/// Whether to queue a MeshCore startup advert at boot.
+///
+/// The gateway does not need an unsolicited advert to serve HTTP telemetry.
+/// Keeping this off avoids a radio TX burst while WiFi is still settling.
+pub const QUEUE_STARTUP_ADVERT: bool = false;
 
 /// Run common ESP32 gateway startup for a concrete board variant.
 pub fn run_gateway<V>() -> !
@@ -99,23 +113,6 @@ where
         "ESP32 platform startup",
     );
     esp_println::println!("Muninn Gate platform=ESP32 variant={}", V::NAME);
-
-    let task_plan = platform.task_plan();
-    if !task_plan.radio_meshcore_is_dedicated() {
-        record_diagnostic(
-            platform.now_ms(),
-            DiagnosticLevel::Error,
-            DiagnosticSubsystem::Runtime,
-            "task_plan_invalid",
-            "LoRa/MeshCore is not isolated on APP CPU",
-        );
-        report_state(GatewayRuntimeState::Error {
-            reason: GatewayRuntimeError::Platform,
-        });
-        loop {
-            core::hint::spin_loop();
-        }
-    }
 
     let Some(board_resources) = platform.take_board_resources() else {
         record_diagnostic(
@@ -241,7 +238,8 @@ where
         );
     }
 
-    let mut scheduler = match scheduler::GatewayScheduler::new(&config, platform.now_ms()) {
+    let scheduler_start_ms = platform.now_ms().saturating_add(INITIAL_SCHEDULE_DELAY_MS);
+    let mut scheduler = match scheduler::GatewayScheduler::new(&config, scheduler_start_ms) {
         Ok(scheduler) => scheduler,
         Err(_) => {
             record_diagnostic(
@@ -259,6 +257,13 @@ where
             }
         },
     };
+    let mut radio_owner = maybe_start_radio_or_halt(
+        &mut platform,
+        radio_resources,
+        radio_config,
+        tx_power,
+        &config,
+    );
 
     if config.http.is_some() && V::CAPABILITIES.http_server {
         wifi::serve_http_forever::<V>(
@@ -268,39 +273,69 @@ where
             display.as_mut(),
             &mut scheduler,
             &mut user_button,
-            move |platform, config| {
-                start_radio_or_halt(platform, radio_resources, radio_config, tx_power, config)
-            },
+            radio_owner.as_mut(),
         );
+    } else {
+        let serial_state = GatewayRuntimeState::Serving {
+            interfaces: ServingInterfaces::new(None, V::CAPABILITIES.usb_serial),
+        };
+        report_state(serial_state);
+        if let Some(display) = display.as_mut() {
+            let _ = display.show_status::<V>(&config, &snapshot, serial_state, platform.now_ms());
+        }
+
+        let delay = Delay::new();
+        loop {
+            {
+                let mut maintenance = || {
+                    if let Some(owner) = radio_owner.as_mut() {
+                        owner.service();
+                    }
+                };
+                scheduler.tick_with_maintenance::<V, _>(
+                    &platform,
+                    &config,
+                    tx_power,
+                    serial_state,
+                    display.as_mut(),
+                    Some(&mut user_button),
+                    &mut maintenance,
+                );
+            }
+            if let Some(owner) = radio_owner.as_mut() {
+                owner.service();
+            }
+            delay.delay_millis(5);
+        }
     }
+}
 
-    start_radio_or_halt(
-        &mut platform,
-        radio_resources,
-        radio_config,
-        tx_power,
-        &config,
-    );
-
-    let serial_state = GatewayRuntimeState::Serving {
-        interfaces: ServingInterfaces::new(None, V::CAPABILITIES.usb_serial),
-    };
-    report_state(serial_state);
-    if let Some(display) = display.as_mut() {
-        let _ = display.show_status::<V>(&config, &snapshot, serial_state, platform.now_ms());
-    }
-
-    let delay = Delay::new();
-    loop {
-        scheduler.tick::<V>(
-            &platform,
-            &config,
+fn maybe_start_radio_or_halt(
+    platform: &mut platform::Esp32Platform,
+    radio_resources: Esp32RadioResources,
+    radio_config: MeshRadioConfig,
+    tx_power: TxPowerMapping,
+    config: &GatewayConfig<MAX_TELEMETRY_PRODUCERS>,
+) -> Option<radio::CooperativeRadioOwner>
+{
+    if START_RADIO_OWNER {
+        Some(start_radio_or_halt(
+            platform,
+            radio_resources,
+            radio_config,
             tx_power,
-            serial_state,
-            display.as_mut(),
-            Some(&mut user_button),
+            config,
+        ))
+    } else {
+        drop((radio_resources, radio_config, tx_power));
+        record_diagnostic(
+            platform.now_ms(),
+            DiagnosticLevel::Warn,
+            DiagnosticSubsystem::Radio,
+            "radio_owner_disabled",
+            "LoRa/MeshCore task disabled for WiFi isolation test",
         );
-        delay.delay_millis(100);
+        None
     }
 }
 
@@ -310,36 +345,54 @@ fn start_radio_or_halt(
     radio_config: MeshRadioConfig,
     tx_power: TxPowerMapping,
     config: &GatewayConfig<MAX_TELEMETRY_PRODUCERS>,
-)
+) -> radio::CooperativeRadioOwner
 {
-    if platform
-        .start_radio_meshcore_core(move || {
-            radio::run_radio_owner_task(radio_resources, radio_config, tx_power)
-        })
-        .is_err()
-    {
-        record_diagnostic(
-            platform.now_ms(),
-            DiagnosticLevel::Error,
-            DiagnosticSubsystem::Radio,
-            "app_cpu_start_failed",
-            "LoRa/MeshCore APP CPU task could not start",
-        );
-        report_state(GatewayRuntimeState::Error {
-            reason: GatewayRuntimeError::Platform,
-        });
-        loop {
-            core::hint::spin_loop();
-        }
-    }
+    let owner = match radio::CooperativeRadioOwner::new(
+        radio_resources,
+        radio_config,
+        tx_power,
+        platform.now_ms(),
+    ) {
+        Ok(owner) => owner,
+        Err(error) => {
+            let (code, message) = match error {
+                radio::RadioOwnerStartError::SpiInit => (
+                    "radio_spi_init_failed",
+                    "SX126x SPI bus initialization failed",
+                ),
+                radio::RadioOwnerStartError::SpiDevice => (
+                    "radio_spi_device_failed",
+                    "SX126x SPI device initialization failed",
+                ),
+                radio::RadioOwnerStartError::RadioInit => {
+                    ("radio_init_failed", "SX1262 radio initialization failed")
+                },
+            };
+            record_diagnostic(
+                platform.now_ms(),
+                DiagnosticLevel::Error,
+                DiagnosticSubsystem::Radio,
+                code,
+                message,
+            );
+            report_state(GatewayRuntimeState::Error {
+                reason: GatewayRuntimeError::Platform,
+            });
+            loop {
+                core::hint::spin_loop();
+            }
+        },
+    };
     record_diagnostic(
         platform.now_ms(),
         DiagnosticLevel::Info,
         DiagnosticSubsystem::Radio,
-        "app_cpu_reserved",
-        "LoRa/MeshCore task reserved on APP CPU",
+        "radio_owner_started",
+        "LoRa/MeshCore owner started cooperatively on WiFi core",
     );
-    meshcore::queue_startup_advert(config, platform.now_ms());
+    if QUEUE_STARTUP_ADVERT {
+        meshcore::queue_startup_advert(config, platform.now_ms());
+    }
 
     if tx_power.selected_level != tx_power.requested_level {
         esp_println::println!(
@@ -355,6 +408,7 @@ fn start_radio_or_halt(
             "board-specific TX power mapping applied",
         );
     }
+    owner
 }
 
 fn print_config_summary<V>(
@@ -498,7 +552,7 @@ pub fn report_state(state: GatewayRuntimeState)
                     endpoint.port,
                 );
             }
-            if interfaces.usb_serial {
+            if interfaces.usb_serial && serial_json_enabled() {
                 serial::write_line("Serial: JSON telemetry enabled");
             }
         },

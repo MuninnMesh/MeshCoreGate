@@ -6,6 +6,10 @@ edition = "2024"
 [lib]
 path = "src/lib.rs"
 
+[features]
+default = []
+serial-json = ["muninn-gate-core/serial-json"]
+
 [dependencies]
 critical-section.workspace = true
 display-interface-i2c.workspace = true
@@ -21,7 +25,7 @@ esp-rom-sys = { workspace = true, features = ["esp32s3"] }
 esp-wifi = { workspace = true, default-features = false, features = ["esp32s3", "wifi", "smoltcp", "log-04", "builtin-scheduler", "esp-alloc"] }
 esp-wifi-sys = { workspace = true, features = ["esp32s3"] }
 heapless.workspace = true
-muninn-gate-core = { workspace = true, features = ["serial-json"] }
+muninn-gate-core.workspace = true
 muninn-gate-ui.workspace = true
 muninn-mesh-meshcore-lib.workspace = true
 muninn-mesh-radio.workspace = true

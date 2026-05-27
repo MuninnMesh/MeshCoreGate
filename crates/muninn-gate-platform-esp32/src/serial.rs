@@ -6,12 +6,14 @@ use esp_hal::Blocking;
 use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx};
 use heapless::{String, Vec};
 use muninn_gate_core::config::MAX_TELEMETRY_PRODUCERS;
+#[cfg(feature = "serial-json")]
 use muninn_gate_core::output::{render_gateway_serial_json, render_serial_json};
 use muninn_gate_core::{Error, TelemetrySnapshot};
 
 use crate::provisioning::USB_CONFIG_JSON_BYTES;
 
 /// Fixed buffer size for one rendered serial JSON event.
+#[cfg(feature = "serial-json")]
 pub const SERIAL_JSON_BUFFER_BYTES: usize = 2048;
 /// Scratch bytes read from USB Serial/JTAG in one non-blocking pass.
 pub const USB_READ_CHUNK_BYTES: usize = 64;
@@ -33,6 +35,7 @@ pub fn write_block(message: &str)
 }
 
 /// Write one telemetry snapshot as newline-delimited JSON events.
+#[cfg(feature = "serial-json")]
 pub fn write_snapshot_json(
     snapshot: &TelemetrySnapshot<MAX_TELEMETRY_PRODUCERS>,
 ) -> Result<(), Error>
@@ -45,6 +48,15 @@ pub fn write_snapshot_json(
         write_line(event.as_str());
     }
 
+    Ok(())
+}
+
+/// Skip telemetry JSON when the serial-json feature is disabled.
+#[cfg(not(feature = "serial-json"))]
+pub fn write_snapshot_json(
+    _snapshot: &TelemetrySnapshot<MAX_TELEMETRY_PRODUCERS>,
+) -> Result<(), Error>
+{
     Ok(())
 }
 

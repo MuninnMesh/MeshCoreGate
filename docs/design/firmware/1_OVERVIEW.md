@@ -103,7 +103,11 @@ rates, and poll latency. The metric contract is documented in
 
 The local display renderer consumes the same config, runtime state, and telemetry snapshot as HTTP and serial. The current UI target is a compact 128x64 OLED page set; the renderer also supports a 128x128 text frame so larger board variants can show more rows without changing the status model.
 
-On ESP32-S3, the LoRa/MeshCore path is assigned to the APP CPU so radio event handling is isolated from WiFi, HTTP, storage, serial, provisioning, and display refresh work on the PRO CPU.
+On ESP32-S3, the current reliability baseline keeps WiFi, HTTP, smoltcp, LoRa,
+scheduler, serial, and display refresh in one cooperative service loop. That
+choice is intentional: field testing showed the proprietary WiFi runtime was
+more stable when the SX1262 owner was serviced cooperatively instead of running
+as an independent APP-core task.
 
 `GatewayRuntimeState` tracks the provisioning/serving state for displays, HTTP output, and serial diagnostics. The expected boot progression is `Unprovisioned` when no valid config exists, `Provisioned` after config validation, `Serving` after HTTP or USB serial output is active, or `Error` when startup cannot continue.
 
@@ -111,14 +115,13 @@ The current code has the trait boundaries, ESP32-S3 WiFi station startup,
 persisted USB serial config upload and replacement, raw `muninn_cfg` flash
 config storage, a DHCP-backed HTTP listener for `/metrics`, `/logs`, and
 `/poll`, serial JSON output, a small RAM diagnostic ring, a shared telemetry
-store, Heltec V4.x radio/display resource retention, OLED status pages, and APP
-CPU ownership for the radio/MeshCore path. HTTP-enabled boots bring up
-`esp-wifi` and DHCP on the PRO CPU before starting the APP CPU radio owner. The
-APP CPU owner initializes the SX1262 path, keeps RX polling alive, queues
-received frames, serializes queued TX with airtime spacing, and publishes radio
-health. The PRO CPU scheduler queues a signed startup MeshCore advert, consumes
-`/poll` requests, sends official MeshCore login and telemetry requests through
-the radio queue, matches encrypted responses, records concise poll errors,
-passively drains matched RX observations into telemetry, and refreshes
-serial/display output. Remaining MeshCore bring-up work is direct-then-flood
-fallback and explicit path support.
+store, Heltec V4.x radio/display resource retention, OLED status pages, and a
+cooperative radio/MeshCore owner. HTTP-enabled boots bring up `esp-wifi`, DHCP,
+the HTTP socket pool, and the SX1262 owner, then service all of them from one
+loop. The radio owner initializes the SX1262 path, keeps RX polling alive,
+queues received frames, serializes queued TX with airtime spacing, and
+publishes radio health. The scheduler consumes `/poll` requests, sends official
+MeshCore login and telemetry requests through the radio queue, matches encrypted
+responses, records concise poll errors, passively drains matched RX
+observations into telemetry, and refreshes serial/display output. Outbound
+MeshCore TX is direct-only by firmware policy.

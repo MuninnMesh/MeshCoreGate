@@ -87,28 +87,32 @@ Board crates are where board policy belongs:
 
 `muninn-gate-platform-esp32` is the reusable ESP32-S3 platform crate. It initializes `esp-hal` and owns ESP32-specific storage, diagnostics, WiFi, HTTP, serial, heap, radio/display resource retention, and MCU-level wiring shared by ESP32 board variants.
 
-This crate is where ESP32-S3 common services belong: WiFi implementation details, flash-backed config storage, USB/JTAG serial, HTTP server integration, and platform task startup. It also owns the ESP32-S3 task placement policy: LoRa/MeshCore runs on the APP CPU, while WiFi/HTTP/storage/serial stays on the PRO CPU. Concrete board crates decide which services to enable through `GateFirmwareVariant` and provide ESP32-specific radio hardware settings through `Esp32BoardVariant`.
+This crate is where ESP32-S3 common services belong: WiFi implementation
+details, flash-backed config storage, USB/JTAG serial, HTTP server integration,
+radio owner startup, and platform task policy. The current reliability baseline
+services WiFi/HTTP/smoltcp, LoRa/MeshCore, storage, serial, scheduler, and
+display cooperatively in one loop. The platform still contains helper APIs for
+starting the APP CPU, but the normal gateway path does not use an independent
+second-core radio task.
 
 The current ESP32 platform code enters USB provisioning when no config is
 stored, persists validated JSON/JSONC config in the raw `muninn_cfg` flash
 partition, offers a boot-time USB config replacement window after provisioning,
 connects WiFi in station mode when `http` is present, obtains DHCP, starts the
-APP CPU radio owner after the HTTP endpoint exists, serves `/metrics`, `/logs`,
-and `/poll` with a small blocking `smoltcp` listener, emits serial JSON from
-the shared telemetry store, drives the 128x64 OLED, retains a small RAM
-diagnostic ring, maps `GatewayConfig.radio` plus ESP32 board hardware settings
-into `MeshRadioConfig`, and runs the APP CPU radio owner entry with Heltec V4.x
-board resources. The platform uses `esp-wifi` with `esp-alloc` and a split
-internal heap, with the large heap segment in `.dram2_uninit` and a smaller
-regular-DRAM spillover segment. The radio owner initializes the SX1262 path,
-continuously polls RX, queues received frames, drains queued TX frames, spaces
-TX by the last airtime, and publishes radio health. The PRO CPU scheduler
+cooperative radio owner, serves `/metrics`, `/logs`, and `/poll` with a fixed
+`smoltcp` socket pool, emits serial JSON from the shared telemetry store, drives
+the 128x64 OLED, retains a small RAM diagnostic ring, maps `GatewayConfig.radio`
+plus ESP32 board hardware settings into `MeshRadioConfig`, and constructs the
+SX1262 owner with Heltec V4.x board resources. The platform uses `esp-wifi`
+with `esp-alloc` and a split internal heap, with the large heap segment in
+`.dram2_uninit` and a smaller regular-DRAM spillover segment. The radio owner
+initializes the SX1262 path, polls RX, queues received frames, drains queued TX
+frames, spaces TX by the last airtime, and publishes radio health. The scheduler
 consumes `/poll` requests, sends official MeshCore login and telemetry requests
 through the TX queue, matches encrypted response tags from the RX queue,
 passively drains matched RX observations into telemetry, refreshes
-serial/display output, and records poll latency/failure metrics.
-Direct-then-flood fallback and explicit path support are still bring-up
-integration points.
+serial/display output, and records poll latency/failure metrics. Outbound
+MeshCore TX is direct-only by firmware policy.
 
 ## Mesh And Radio Crates
 

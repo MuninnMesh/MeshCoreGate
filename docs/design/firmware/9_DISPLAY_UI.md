@@ -105,7 +105,10 @@ Display refresh should be driven by the board/platform crate. A good starting po
 - diagnostics or config state changes
 - a page rotation timer expires
 
-On ESP32-S3, display refresh belongs with WiFi, HTTP, serial, storage, and provisioning work on the PRO CPU. LoRa/MeshCore stays on the APP CPU.
+On ESP32-S3, display refresh belongs in the cooperative platform loop with
+WiFi, HTTP, serial, storage, provisioning, scheduler, and LoRa/MeshCore service.
+Refresh work is timed in gateway metrics so display updates cannot silently hide
+network or radio stalls.
 
 ## Local Button
 

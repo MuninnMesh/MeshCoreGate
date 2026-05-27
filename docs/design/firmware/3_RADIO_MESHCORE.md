@@ -87,27 +87,30 @@ Only the radio-owning task should directly mutate the radio device. Other tasks 
 
 On ESP32 this boundary can be an Embassy channel, a critical-section queue, or another local async primitive chosen by the board crate. Core should not depend on that choice.
 
-## ESP32-S3 Core Assignment
+## ESP32-S3 Service Model
 
-ESP32-S3 builds must keep the LoRa/MeshCore path on the APP CPU. `muninn-gate-platform-esp32` owns this platform policy:
+ESP32-S3 builds currently service LoRa/MeshCore cooperatively from the same
+platform loop that services WiFi, HTTP, smoltcp, scheduler, serial, and display
+refresh. `muninn-gate-platform-esp32` owns this platform policy:
 
-- APP CPU: LoRa radio owner, IRQ/event handling, RX/TX state transitions, and MeshCore packet path.
-- PRO CPU: startup, storage, WiFi, HTTP, serial, provisioning, and display/UI work.
-
-This split keeps WiFi/HTTP bursts, provisioning writes, and rendering work from delaying radio event handling. The APP CPU task should block on radio IRQs, radio command queues, or scheduler requests; it should not run HTTP, storage, JSON rendering, or display work.
+- WiFi/HTTP runs first in each loop so smoltcp receives frequent polls.
+- The cooperative radio owner then performs bounded RX/TX/health work.
+- Scheduler MeshCore waits accept a maintenance callback so WiFi/HTTP and LoRa
+  service continue while waiting for login or telemetry replies.
+- The platform still has an APP-core radio task helper for experimentation, but
+  it is not the reliability baseline.
 
 For HTTP-enabled ESP32 boots, the platform crate initializes the ESP WiFi
-scheduler/controller, connects the station, and waits for DHCP on the PRO CPU
-before starting the APP CPU radio owner. Serial-only boots skip WiFi and start
-the APP CPU radio owner directly. The APP CPU is started through `esp-hal`, and
-the platform holds the core guard for the lifetime of the gateway. The APP CPU
-radio owner entry receives Heltec V4.x board resources and the mapped
-`MeshRadioConfig`, constructs the SPI device, SX126x pins, RF switch, and
-clock, initializes `MeshRadio`, starts continuous RX, polls `poll_receive`,
-queues received frames for the MeshCore adapter, drains queued TX frames,
-spaces TX by airtime, reinitializes after repeated errors, and publishes RX/TX
-packet health, CRC/header/timeouts, RSSI/SNR, noise floor, chip mode, device
-errors, selected TX power, and last TX airtime.
+scheduler/controller, connects the station, waits for DHCP, starts the HTTP
+socket pool, and constructs the cooperative SX1262 owner. Serial-only boots skip
+WiFi but still use the same cooperative radio owner. The owner receives Heltec
+V4.x board resources and the mapped `MeshRadioConfig`, constructs the SPI
+device, SX126x pins, RF switch, and clock, initializes `MeshRadio`, starts
+continuous RX, polls `poll_receive`, queues received frames for the MeshCore
+adapter, drains queued TX frames, spaces TX by airtime, reinitializes after
+repeated errors, and publishes RX/TX packet health, CRC/header/timeouts,
+RSSI/SNR, noise floor, chip mode, device errors, selected TX power, and last TX
+airtime.
 
 ## Radio State Model
 

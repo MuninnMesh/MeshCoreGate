@@ -10,6 +10,10 @@ path = "src/main.rs"
 [features]
 default = ["heltec-v4"]
 esp32s3 = ["heltec-v4"]
+serial-json = [
+    "muninn-gate-board-heltec-v4?/serial-json",
+    "muninn-gate-core/serial-json",
+]
 heltec-v4 = [
     "dep:esp-backtrace",
     "dep:esp-hal",

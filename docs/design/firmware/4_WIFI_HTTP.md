@@ -12,15 +12,17 @@ The current ESP32 flow is:
 4. If `http` config is present, create the `esp-wifi` station controller.
 5. Connect to the configured SSID.
 6. Obtain an IPv4 address with DHCP.
-7. Start the APP CPU radio owner once DHCP has assigned an endpoint.
-8. Start a small blocking `smoltcp` TCP listener on the configured HTTP port.
-9. Serve HTTP endpoints by rendering the current telemetry, diagnostics, or command state.
+7. Start the cooperative LoRa/MeshCore radio owner.
+8. Start a fixed-pool `smoltcp` TCP listener on the configured HTTP port.
+9. Serve HTTP endpoints while continuing to service smoltcp, DHCP, scheduler,
+   display, serial, button input, and LoRa in the same loop.
 
-The ESP WiFi scheduler/controller and station/DHCP bring-up run on the PRO CPU
-before the APP CPU radio owner is started for HTTP-enabled boots. After DHCP
-succeeds, WiFi, socket polling, HTTP, scheduling, display refresh, and storage
-work continue on the PRO CPU while LoRa/RX/TX ownership stays isolated on the
-APP CPU. Serial-only boots skip WiFi and start the radio owner directly.
+The ESP32 reliability baseline is cooperative single-loop servicing. Earlier
+APP-core radio isolation was removed from the normal path after field testing
+showed WiFi-blob panics when an independent second-core radio loop ran beside
+`esp-wifi`. HTTP-enabled and serial-only boots both use the cooperative radio
+owner; HTTP boots additionally keep smoltcp serviced before, during, and after
+scheduled LoRa polls.
 
 WiFi uses the `esp-wifi` station controller directly with the crate's
 `builtin-scheduler`, `smoltcp`, and `esp-alloc` features. Muninn Gate stores
@@ -36,15 +38,17 @@ pressure. Heap statistics are currently omitted from telemetry because
 `esp_alloc` stats use an internal `RefCell` and can re-enter allocator state
 during WiFi startup.
 
-The build config keeps WiFi queue/buffer counts small and disables AMPDU RX/TX
-aggregation because the device serves low-rate local telemetry, not
+The build config keeps WiFi queue/buffer counts small and avoids esp-wifi
+scan/retry environment knobs that can touch unimplemented NVS callback paths in
+the no_std OS adapter. The device serves low-rate local telemetry, not
 high-throughput networking.
 
 The runtime also applies reliability-oriented WiFi settings: modem power save is
-disabled, WiFi TX power is capped at about 15 dBm, the applied TX power is
-logged, and reconnect attempts are paced. DHCP is reset on link recovery and IP
-state changes so smoltcp does not remain in an old discovery backoff. Details
-and the operational checklist live in [10_RELIABILITY.md](10_RELIABILITY.md).
+disabled, country policy is applied after WiFi start, WiFi TX power is requested
+and read back, the strongest scanned BSSID/channel is pinned when accepted, and
+reconnect attempts are paced. DHCP is reset on link recovery and IP state
+changes so smoltcp does not remain in an old discovery backoff. Details and the
+operational checklist live in [10_RELIABILITY.md](10_RELIABILITY.md).
 
 WiFi state management belongs in the ESP32 platform crate. `muninn-gate-core` should not depend on the WiFi stack or know whether the board uses WiFi, USB, Ethernet, or serial-only output.
 
@@ -65,18 +69,22 @@ Prometheus and diagnostic JSON rendering live in core because they are platform-
 
 The HTTP server intentionally only parses simple `GET` requests and closes each
 connection after one response. It is enough for Prometheus scraping and manual
-bring-up with `curl`, while keeping the radio/MeshCore task isolated on the APP
-CPU.
+bring-up with `curl`.
 
 smoltcp has no listen backlog, so the ESP32 server uses a small fixed pool of
-two HTTP sockets rather than a single socket. Each socket has bounded RX, TX,
-and request buffers, TCP timeout/keepalive, per-socket request accumulation, and
-abort-on-stall behavior. All HTTP sockets are aborted when WiFi disconnects,
-DHCP is deconfigured, the IP address changes, or WiFi reconnects. The pool size
-and buffer sizes are intentionally conservative because the ESP WiFi blob is
-sensitive to internal RAM pressure.
+HTTP sockets rather than a single socket. The current pool uses sixteen sockets
+with small per-socket RX/TX buffers, TCP timeout/keepalive, per-socket request
+accumulation, and abort-on-stall behavior. All HTTP sockets are aborted when
+WiFi disconnects, DHCP is deconfigured, the IP address changes, or WiFi
+reconnects.
 
-The current `/metrics` response renders the shared ESP32 telemetry store. Configured producers receive live values when the ESP32 MeshCore adapter matches received frames to those producers. The current `/logs` response uses the core diagnostic JSON shape and reads from the ESP32 platform diagnostic collector. `/poll` records an operator poll request and returns `202 Accepted`; the scheduler consumes that request outside the socket handler so HTTP work does not directly touch the radio.
+The current `/metrics` response streams the shared ESP32 telemetry store with
+HTTP chunked transfer. Configured producers receive live values when the ESP32
+MeshCore adapter matches received frames to those producers. The current
+`/logs` response uses the core diagnostic JSON shape and reads from the ESP32
+platform diagnostic collector. `/poll` records an operator poll request and
+returns `202 Accepted`; the scheduler consumes that request outside the socket
+handler so HTTP work does not directly touch the radio.
 
 Gateway telemetry is rendered beside producer telemetry. It includes selected
 TX power level/output, poll success rate, poll latency, radio counters,
@@ -93,7 +101,12 @@ HTTP bearer auth is active when `http.tokens` contains one or more tokens. Empty
 
 ## Serial JSON
 
-Serial output is separate from the HTTP server. Boards with USB/JTAG serial emit one JSON object per gateway/producer telemetry update, plus a periodic heartbeat while the runtime is unchanged. If `http` config is present, serial still runs; if `http` is omitted, serial is the only output.
+Serial output is separate from the HTTP server. Boards with USB/JTAG serial
+always emit boot/status logs and support the USB config upload path. Telemetry
+JSON events are feature-gated behind `serial-json`; the default firmware build
+keeps that feature off so WiFi/HTTP can be tested with less formatting and
+serial-output load. If `http` is omitted, serial logs and optional serial JSON
+are the only output path.
 
 Serial JSON rendering can use the feature-gated helper in `muninn-gate-core`.
 It emits gateway metrics, top-level producer metrics, poll status, RSSI/SNR, and

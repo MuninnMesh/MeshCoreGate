@@ -39,8 +39,13 @@ use esp_wifi::EspWifiController;
 use muninn_gate_core::Clock;
 use static_cell::StaticCell;
 
-/// Stack reserved for the dedicated LoRa/MeshCore APP CPU task.
-pub const RADIO_MESHCORE_STACK_BYTES: usize = 32 * 1024;
+/// Stack reserved for the optional dedicated LoRa/MeshCore APP CPU task.
+///
+/// The experimental dedicated-core radio owner runs a large async state machine
+/// with SX126x, MeshCore, SPI, ADC, and queue state captured in one future.
+/// Keep this conservative: stack corruption here presents as unrelated WiFi
+/// blob panics because both cores share internal RAM.
+pub const RADIO_MESHCORE_STACK_BYTES: usize = 64 * 1024;
 /// Internal heap backed by the ESP32-S3 DRAM2 region.
 pub const FIRMWARE_DRAM2_HEAP_BYTES: usize = 70 * 1024;
 /// Internal heap spillover in the regular DRAM segment.
@@ -216,9 +221,9 @@ pub struct Esp32ExternalPowerGuard
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Esp32Core
 {
-    /// PRO CPU, used for startup, WiFi, HTTP, storage, and serial work.
+    /// PRO CPU, used by the current cooperative runtime.
     ProCpu,
-    /// APP CPU, reserved for LoRa radio and MeshCore work.
+    /// APP CPU, retained for experimental dedicated radio-owner runs.
     AppCpu,
 }
 
@@ -238,18 +243,18 @@ pub struct Esp32TaskPlan
 
 impl Esp32TaskPlan
 {
-    /// Return the default ESP32-S3 task plan for Muninn Gate.
+    /// Return the current default ESP32-S3 task plan for Muninn Gate.
     pub const fn default_esp32s3() -> Self
     {
         Self {
-            radio_meshcore_core: Esp32Core::AppCpu,
+            radio_meshcore_core: Esp32Core::ProCpu,
             wifi_http_core:      Esp32Core::ProCpu,
             storage_core:        Esp32Core::ProCpu,
             serial_core:         Esp32Core::ProCpu,
         }
     }
 
-    /// Return true when LoRa/MeshCore has an exclusive CPU assignment.
+    /// Return true when LoRa/MeshCore has an experimental exclusive CPU assignment.
     pub const fn radio_meshcore_is_dedicated(&self) -> bool
     {
         matches!(self.radio_meshcore_core, Esp32Core::AppCpu)
@@ -369,7 +374,7 @@ impl Esp32Platform
         Esp32TaskPlan::default_esp32s3()
     }
 
-    /// Start the dedicated APP CPU task for LoRa and MeshCore ownership.
+    /// Start the optional dedicated APP CPU task for LoRa and MeshCore ownership.
     pub fn start_radio_meshcore_core<F>(&mut self, entry: F) -> Result<(), Esp32TaskStartError>
     where
         F: FnOnce() + Send + 'static,

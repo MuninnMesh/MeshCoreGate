@@ -1,8 +1,9 @@
 //! ESP32 scheduler runtime integration.
 //!
-//! The scheduler runs on the PRO CPU alongside WiFi, HTTP, USB serial, and the
-//! display. The APP CPU owns LoRa IRQ polling and only communicates through
-//! fixed queues, so this loop cannot block or directly touch radio hardware.
+//! The scheduler runs in the same cooperative ESP32 loop as WiFi, HTTP, USB
+//! serial, display refresh, and LoRa service. MeshCore response waits accept a
+//! maintenance callback so smoltcp and the radio owner keep running while the
+//! scheduler waits for login or telemetry replies.
 
 use embassy_futures::block_on;
 use muninn_gate_core::config::MAX_TELEMETRY_PRODUCERS;
@@ -55,8 +56,32 @@ impl GatewayScheduler
         })
     }
 
-    /// Run one non-blocking scheduler and output pass.
+    /// Run one scheduler and output pass.
     pub fn tick<V>(
+        &mut self,
+        platform: &Esp32Platform,
+        config: &GatewayConfig<MAX_TELEMETRY_PRODUCERS>,
+        tx_power: TxPowerMapping,
+        state: GatewayRuntimeState,
+        display: Option<&mut LocalDisplay>,
+        button: Option<&mut UserButton>,
+    ) where
+        V: GateFirmwareVariant,
+    {
+        let mut maintenance = || {};
+        self.tick_with_maintenance::<V, _>(
+            platform,
+            config,
+            tx_power,
+            state,
+            display,
+            button,
+            &mut maintenance,
+        );
+    }
+
+    /// Run one scheduler pass while periodically servicing platform work.
+    pub fn tick_with_maintenance<V, M>(
         &mut self,
         platform: &Esp32Platform,
         config: &GatewayConfig<MAX_TELEMETRY_PRODUCERS>,
@@ -64,8 +89,10 @@ impl GatewayScheduler
         state: GatewayRuntimeState,
         mut display: Option<&mut LocalDisplay>,
         button: Option<&mut UserButton>,
+        maintenance: &mut M,
     ) where
         V: GateFirmwareVariant,
+        M: FnMut(),
     {
         let now_ms = platform.now_ms();
         telemetry_state::refresh_gateway_metrics(now_ms, tx_power);
@@ -101,7 +128,7 @@ impl GatewayScheduler
 
         let due_count = self.scheduler.due_producers(now_ms).len();
         let summary = if due_count > 0 && radio::radio_ready() {
-            self.poll_due::<V>(config, platform, state, display.as_deref_mut())
+            self.poll_due::<V, M>(config, platform, state, display.as_deref_mut(), maintenance)
         } else {
             PollSummary::default()
         };
@@ -174,20 +201,23 @@ impl GatewayScheduler
         }
     }
 
-    fn poll_due<V>(
+    fn poll_due<V, M>(
         &mut self,
         config: &GatewayConfig<MAX_TELEMETRY_PRODUCERS>,
         platform: &Esp32Platform,
         state: GatewayRuntimeState,
         display: Option<&mut LocalDisplay>,
+        maintenance: &mut M,
     ) -> PollSummary
     where
         V: GateFirmwareVariant,
+        M: FnMut(),
     {
         let now_ms = platform.now_ms();
         let mut client = meshcore::RadioMeshcoreClient::new(config, now_ms);
         client.set_now_ms(now_ms);
         client.set_progress_display(display, state, V::BOARD);
+        client.set_network_maintenance(maintenance);
         let mut store = telemetry_state::SharedTelemetryStore;
         block_on(
             self.scheduler

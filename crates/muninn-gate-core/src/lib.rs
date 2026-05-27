@@ -55,6 +55,7 @@ pub use runtime::{GatewayRuntimeError, GatewayRuntimeState, HttpEndpoint, Servin
 pub use telemetry::{
     FixedTelemetryStore,
     GatewayMetrics,
+    HttpSocketStateSnapshot,
     MAX_TELEMETRY_CHANNELS,
     PollFailureReason,
     ProducerPollMetrics,

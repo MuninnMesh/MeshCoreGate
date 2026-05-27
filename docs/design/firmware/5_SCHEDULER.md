@@ -14,8 +14,8 @@ The scheduler answers two questions:
 ## Runtime Loop
 
 The board runtime owns sleeping and task execution. On ESP32,
-`muninn-gate-platform-esp32::scheduler::GatewayScheduler` runs this loop on the
-PRO CPU while the APP CPU owns radio RX/TX.
+`muninn-gate-platform-esp32::scheduler::GatewayScheduler` runs inside the same
+cooperative loop as WiFi/HTTP/smoltcp and the LoRa radio owner.
 
 A typical board loop is:
 

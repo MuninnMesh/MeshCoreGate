@@ -387,6 +387,647 @@ where
         writeln!(out)?;
     }
 
+    write_help(
+        out,
+        "muninn_gate_wifi_connected",
+        "Whether the ESP WiFi station is associated.",
+        "gauge",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_wifi_connected {}",
+        u8::from(snapshot.gateway.wifi_connected)
+    )?;
+    writeln!(out)?;
+
+    write_help(
+        out,
+        "muninn_gate_wifi_disconnect_total",
+        "WiFi disconnect events observed by the firmware.",
+        "counter",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_wifi_disconnect_total {}",
+        snapshot.gateway.wifi_disconnect_total
+    )?;
+    writeln!(out)?;
+
+    if let Some(reason) = snapshot.gateway.wifi_last_disconnect_reason {
+        write_help(
+            out,
+            "muninn_gate_wifi_last_disconnect_reason",
+            "Latest WiFi disconnect reason code.",
+            "gauge",
+        )?;
+        writeln!(out, "muninn_gate_wifi_last_disconnect_reason {}", reason)?;
+        writeln!(out)?;
+    }
+
+    write_help(
+        out,
+        "muninn_gate_wifi_connect_request_total",
+        "WiFi connect requests issued by firmware.",
+        "counter",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_wifi_connect_request_total {}",
+        snapshot.gateway.wifi_connect_request_total
+    )?;
+    writeln!(out)?;
+
+    write_help(
+        out,
+        "muninn_gate_wifi_connect_request_error_total",
+        "WiFi connect requests that returned an immediate error.",
+        "counter",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_wifi_connect_request_error_total {}",
+        snapshot.gateway.wifi_connect_request_error_total
+    )?;
+    writeln!(out)?;
+
+    write_help(
+        out,
+        "muninn_gate_wifi_deep_recovery_total",
+        "WiFi controller stop/start recoveries.",
+        "counter",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_wifi_deep_recovery_total {}",
+        snapshot.gateway.wifi_deep_recovery_total
+    )?;
+    writeln!(out)?;
+
+    if let Some(rssi) = snapshot.gateway.wifi_rssi_dbm {
+        write_help(
+            out,
+            "muninn_gate_wifi_rssi_dbm",
+            "Latest associated AP RSSI in dBm.",
+            "gauge",
+        )?;
+        writeln!(out, "muninn_gate_wifi_rssi_dbm {}", rssi)?;
+        writeln!(out)?;
+    }
+
+    if let Some(channel) = snapshot.gateway.wifi_channel {
+        write_help(
+            out,
+            "muninn_gate_wifi_channel",
+            "Latest associated AP primary channel.",
+            "gauge",
+        )?;
+        writeln!(out, "muninn_gate_wifi_channel {}", channel)?;
+        writeln!(out)?;
+    }
+
+    if let Some(bssid) = snapshot.gateway.wifi_bssid {
+        write_help(
+            out,
+            "muninn_gate_wifi_ap_info",
+            "Latest associated AP identity.",
+            "gauge",
+        )?;
+        write!(out, "muninn_gate_wifi_ap_info{{bssid=\"")?;
+        write_mac(out, bssid)?;
+        writeln!(out, "\"}} 1")?;
+        writeln!(out)?;
+    }
+
+    if let Some(auth_mode) = snapshot.gateway.wifi_auth_mode {
+        write_help(
+            out,
+            "muninn_gate_wifi_auth_mode",
+            "Latest associated AP auth mode as reported by ESP-IDF.",
+            "gauge",
+        )?;
+        writeln!(out, "muninn_gate_wifi_auth_mode {}", auth_mode)?;
+        writeln!(out)?;
+    }
+
+    if let Some(requested) = snapshot.gateway.wifi_tx_power_requested_quarter_dbm {
+        write_help(
+            out,
+            "muninn_gate_wifi_tx_power_requested_quarter_dbm",
+            "Requested ESP WiFi TX power cap in quarter-dBm units.",
+            "gauge",
+        )?;
+        writeln!(
+            out,
+            "muninn_gate_wifi_tx_power_requested_quarter_dbm {}",
+            requested
+        )?;
+        writeln!(out)?;
+    }
+
+    if let Some(applied) = snapshot.gateway.wifi_tx_power_applied_quarter_dbm {
+        write_help(
+            out,
+            "muninn_gate_wifi_tx_power_applied_quarter_dbm",
+            "Applied ESP WiFi TX power cap in quarter-dBm units.",
+            "gauge",
+        )?;
+        writeln!(
+            out,
+            "muninn_gate_wifi_tx_power_applied_quarter_dbm {}",
+            applied
+        )?;
+        writeln!(out)?;
+    }
+
+    write_help(
+        out,
+        "muninn_gate_dhcp_configured",
+        "Whether DHCP currently has a configured IPv4 lease.",
+        "gauge",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_dhcp_configured {}",
+        u8::from(snapshot.gateway.dhcp_configured)
+    )?;
+    writeln!(out)?;
+
+    write_help(
+        out,
+        "muninn_gate_dhcp_configured_total",
+        "DHCP configured events.",
+        "counter",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_dhcp_configured_total {}",
+        snapshot.gateway.dhcp_configured_total
+    )?;
+    writeln!(out)?;
+
+    write_help(
+        out,
+        "muninn_gate_dhcp_deconfigured_total",
+        "DHCP deconfigured events.",
+        "counter",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_dhcp_deconfigured_total {}",
+        snapshot.gateway.dhcp_deconfigured_total
+    )?;
+    writeln!(out)?;
+
+    write_help(
+        out,
+        "muninn_gate_dhcp_reset_total",
+        "DHCP reset calls.",
+        "counter",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_dhcp_reset_total {}",
+        snapshot.gateway.dhcp_reset_total
+    )?;
+    writeln!(out)?;
+
+    write_help(
+        out,
+        "muninn_gate_dhcp_timeout_total",
+        "DHCP timeouts that forced WiFi reconnect.",
+        "counter",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_dhcp_timeout_total {}",
+        snapshot.gateway.dhcp_timeout_total
+    )?;
+    writeln!(out)?;
+
+    if let Some(acquire_ms) = snapshot.gateway.dhcp_last_acquire_ms {
+        write_help(
+            out,
+            "muninn_gate_dhcp_last_acquire_ms",
+            "Latest DHCP acquisition duration in milliseconds.",
+            "gauge",
+        )?;
+        writeln!(out, "muninn_gate_dhcp_last_acquire_ms {}", acquire_ms)?;
+        writeln!(out)?;
+    }
+
+    write_help(
+        out,
+        "muninn_gate_smoltcp_poll_total",
+        "smoltcp interface polls since boot.",
+        "counter",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_smoltcp_poll_total {}",
+        snapshot.gateway.smoltcp_poll_total
+    )?;
+    writeln!(out)?;
+
+    write_help(
+        out,
+        "muninn_gate_smoltcp_poll_gap_max_ms",
+        "Longest observed gap between smoltcp interface polls.",
+        "gauge",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_smoltcp_poll_gap_max_ms {}",
+        snapshot.gateway.smoltcp_poll_gap_max_ms
+    )?;
+    writeln!(out)?;
+
+    if let Some(last_poll_ms) = snapshot.gateway.last_smoltcp_poll_ms {
+        write_help(
+            out,
+            "muninn_gate_smoltcp_ms_since_last_poll",
+            "Age of the latest smoltcp interface poll.",
+            "gauge",
+        )?;
+        writeln!(
+            out,
+            "muninn_gate_smoltcp_ms_since_last_poll {}",
+            snapshot.gateway.uptime_ms.saturating_sub(last_poll_ms)
+        )?;
+        writeln!(out)?;
+    }
+
+    write_help(
+        out,
+        "muninn_gate_smoltcp_poll_delay_miss_total",
+        "smoltcp poll gaps that exceeded the diagnostic deadline.",
+        "counter",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_smoltcp_poll_delay_miss_total {}",
+        snapshot.gateway.smoltcp_poll_delay_miss_total
+    )?;
+    writeln!(out)?;
+
+    write_help(
+        out,
+        "muninn_gate_smoltcp_poll_bad_gap_total",
+        "smoltcp poll gaps that exceeded the bad-gap threshold.",
+        "counter",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_smoltcp_poll_bad_gap_total {}",
+        snapshot.gateway.smoltcp_poll_bad_gap_total
+    )?;
+    writeln!(out)?;
+
+    write_help(
+        out,
+        "muninn_gate_http_requests_total",
+        "HTTP requests accepted by the embedded server.",
+        "counter",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_http_requests_total {}",
+        snapshot.gateway.http_requests_total
+    )?;
+    writeln!(out)?;
+
+    write_help(
+        out,
+        "muninn_gate_http_success_total",
+        "HTTP responses completed successfully by the embedded server.",
+        "counter",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_http_success_total {}",
+        snapshot.gateway.http_success_total
+    )?;
+    writeln!(out)?;
+
+    write_help(
+        out,
+        "muninn_gate_http_send_error_total",
+        "HTTP responses aborted while sending.",
+        "counter",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_http_send_error_total {}",
+        snapshot.gateway.http_send_error_total
+    )?;
+    writeln!(out)?;
+
+    write_help(
+        out,
+        "muninn_gate_http_socket_abort_total",
+        "HTTP TCP sockets explicitly aborted by the firmware.",
+        "counter",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_http_socket_abort_total {}",
+        snapshot.gateway.http_socket_abort_total
+    )?;
+    writeln!(out)?;
+
+    write_help(
+        out,
+        "muninn_gate_http_active_sockets",
+        "Current active HTTP TCP sockets.",
+        "gauge",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_http_active_sockets {}",
+        snapshot.gateway.http_active_sockets
+    )?;
+    writeln!(out)?;
+
+    write_help(
+        out,
+        "muninn_gate_http_listening_sockets",
+        "Current HTTP TCP sockets listening for new clients.",
+        "gauge",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_http_listening_sockets {}",
+        snapshot.gateway.http_listening_sockets
+    )?;
+    writeln!(out)?;
+
+    write_help(
+        out,
+        "muninn_gate_http_closed_sockets",
+        "Current closed HTTP TCP sockets.",
+        "gauge",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_http_closed_sockets {}",
+        snapshot.gateway.http_closed_sockets
+    )?;
+    writeln!(out)?;
+
+    write_help(
+        out,
+        "muninn_gate_http_established_sockets",
+        "Current established HTTP TCP sockets.",
+        "gauge",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_http_established_sockets {}",
+        snapshot.gateway.http_established_sockets
+    )?;
+    writeln!(out)?;
+
+    write_help(
+        out,
+        "muninn_gate_http_syn_sent_sockets",
+        "Current HTTP TCP sockets in SYN-SENT.",
+        "gauge",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_http_syn_sent_sockets {}",
+        snapshot.gateway.http_syn_sent_sockets
+    )?;
+    writeln!(out)?;
+
+    write_help(
+        out,
+        "muninn_gate_http_syn_received_sockets",
+        "Current HTTP TCP sockets in SYN-RECEIVED.",
+        "gauge",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_http_syn_received_sockets {}",
+        snapshot.gateway.http_syn_received_sockets
+    )?;
+    writeln!(out)?;
+
+    write_help(
+        out,
+        "muninn_gate_http_fin_wait_1_sockets",
+        "Current HTTP TCP sockets in FIN-WAIT-1.",
+        "gauge",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_http_fin_wait_1_sockets {}",
+        snapshot.gateway.http_fin_wait_1_sockets
+    )?;
+    writeln!(out)?;
+
+    write_help(
+        out,
+        "muninn_gate_http_fin_wait_2_sockets",
+        "Current HTTP TCP sockets in FIN-WAIT-2.",
+        "gauge",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_http_fin_wait_2_sockets {}",
+        snapshot.gateway.http_fin_wait_2_sockets
+    )?;
+    writeln!(out)?;
+
+    write_help(
+        out,
+        "muninn_gate_http_close_wait_sockets",
+        "Current HTTP TCP sockets in CLOSE-WAIT.",
+        "gauge",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_http_close_wait_sockets {}",
+        snapshot.gateway.http_close_wait_sockets
+    )?;
+    writeln!(out)?;
+
+    write_help(
+        out,
+        "muninn_gate_http_time_wait_sockets",
+        "Current HTTP TCP sockets in TIME-WAIT.",
+        "gauge",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_http_time_wait_sockets {}",
+        snapshot.gateway.http_time_wait_sockets
+    )?;
+    writeln!(out)?;
+
+    write_help(
+        out,
+        "muninn_gate_http_closing_sockets",
+        "Current HTTP TCP sockets in CLOSING.",
+        "gauge",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_http_closing_sockets {}",
+        snapshot.gateway.http_closing_sockets
+    )?;
+    writeln!(out)?;
+
+    write_help(
+        out,
+        "muninn_gate_http_last_ack_sockets",
+        "Current HTTP TCP sockets in LAST-ACK.",
+        "gauge",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_http_last_ack_sockets {}",
+        snapshot.gateway.http_last_ack_sockets
+    )?;
+    writeln!(out)?;
+
+    if let Some(oldest_ms) = snapshot.gateway.http_oldest_socket_age_ms {
+        write_help(
+            out,
+            "muninn_gate_http_oldest_socket_age_ms",
+            "Oldest non-listening/non-closed HTTP socket age.",
+            "gauge",
+        )?;
+        writeln!(out, "muninn_gate_http_oldest_socket_age_ms {}", oldest_ms)?;
+        writeln!(out)?;
+    }
+
+    if let Some(last_http_request_ms) = snapshot.gateway.last_http_request_ms {
+        write_help(
+            out,
+            "muninn_gate_http_last_request_age_ms",
+            "Age of the latest accepted HTTP request in milliseconds.",
+            "gauge",
+        )?;
+        writeln!(
+            out,
+            "muninn_gate_http_last_request_age_ms {}",
+            snapshot
+                .gateway
+                .uptime_ms
+                .saturating_sub(last_http_request_ms)
+        )?;
+        writeln!(out)?;
+    }
+
+    if let Some(last_http_success_ms) = snapshot.gateway.last_http_success_ms {
+        write_help(
+            out,
+            "muninn_gate_http_last_success_age_ms",
+            "Age of the latest successful HTTP response in milliseconds.",
+            "gauge",
+        )?;
+        writeln!(
+            out,
+            "muninn_gate_http_last_success_age_ms {}",
+            snapshot
+                .gateway
+                .uptime_ms
+                .saturating_sub(last_http_success_ms)
+        )?;
+        writeln!(out)?;
+    }
+
+    write_help(
+        out,
+        "muninn_gate_network_recovery_total",
+        "Network recovery actions forced by the firmware.",
+        "counter",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_network_recovery_total {}",
+        snapshot.gateway.network_recovery_total
+    )?;
+    writeln!(out)?;
+
+    write_help(
+        out,
+        "muninn_gate_main_loop_gap_max_ms",
+        "Longest observed network main-loop gap in milliseconds.",
+        "gauge",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_main_loop_gap_max_ms {}",
+        snapshot.gateway.main_loop_gap_max_ms
+    )?;
+    writeln!(out)?;
+
+    write_help(
+        out,
+        "muninn_gate_main_loop_gap_last_ms",
+        "Latest observed network main-loop gap in milliseconds.",
+        "gauge",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_main_loop_gap_last_ms {}",
+        snapshot.gateway.main_loop_gap_last_ms
+    )?;
+    writeln!(out)?;
+
+    write_help(
+        out,
+        "muninn_gate_scheduler_tick_max_ms",
+        "Longest observed scheduler tick duration in milliseconds.",
+        "gauge",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_scheduler_tick_max_ms {}",
+        snapshot.gateway.scheduler_tick_max_ms
+    )?;
+    writeln!(out)?;
+
+    write_help(
+        out,
+        "muninn_gate_scheduler_tick_last_ms",
+        "Latest observed scheduler tick duration in milliseconds.",
+        "gauge",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_scheduler_tick_last_ms {}",
+        snapshot.gateway.scheduler_tick_last_ms
+    )?;
+    writeln!(out)?;
+
+    write_help(
+        out,
+        "muninn_gate_lora_service_max_ms",
+        "Longest cooperative LoRa service duration in milliseconds.",
+        "gauge",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_lora_service_max_ms {}",
+        snapshot.gateway.lora_service_max_ms
+    )?;
+    writeln!(out)?;
+
+    write_help(
+        out,
+        "muninn_gate_http_service_max_ms",
+        "Longest HTTP service pass duration in milliseconds.",
+        "gauge",
+    )?;
+    writeln!(
+        out,
+        "muninn_gate_http_service_max_ms {}",
+        snapshot.gateway.http_service_max_ms
+    )?;
+    writeln!(out)?;
+
     if let Some(free_heap_bytes) = snapshot.gateway.free_heap_bytes {
         write_help(
             out,
@@ -457,12 +1098,10 @@ where
     Ok(())
 }
 
-fn write_help<W>(out: &mut W, name: &str, help: &str, metric_type: &str) -> Result<(), Error>
+fn write_help<W>(_out: &mut W, _name: &str, _help: &str, _metric_type: &str) -> Result<(), Error>
 where
     W: fmt::Write + ?Sized,
 {
-    writeln!(out, "# HELP {name} {help}")?;
-    writeln!(out, "# TYPE {name} {metric_type}")?;
     Ok(())
 }
 
@@ -739,6 +1378,17 @@ where
     Ok(())
 }
 
+fn write_mac<W>(out: &mut W, mac: [u8; 6]) -> Result<(), fmt::Error>
+where
+    W: fmt::Write + ?Sized,
+{
+    write!(
+        out,
+        "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+        mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
+    )
+}
+
 struct PerMille(u16);
 
 impl fmt::Display for PerMille
@@ -813,6 +1463,55 @@ mod tests
         gateway.radio_last_tx_airtime_ms = Some(123);
         gateway.last_poll_latency_ms = Some(128);
         gateway.avg_poll_latency_ms = Some(128);
+        gateway.wifi_connected = true;
+        gateway.wifi_connect_started_ms = Some(1_100);
+        gateway.wifi_connected_ms = Some(1_200);
+        gateway.wifi_disconnect_total = 2;
+        gateway.wifi_last_disconnect_reason = Some(2);
+        gateway.wifi_connect_request_total = 3;
+        gateway.wifi_connect_request_error_total = 1;
+        gateway.wifi_deep_recovery_total = 1;
+        gateway.wifi_rssi_dbm = Some(-55);
+        gateway.wifi_channel = Some(6);
+        gateway.wifi_bssid = Some([1, 2, 3, 4, 5, 6]);
+        gateway.wifi_auth_mode = Some(3);
+        gateway.wifi_tx_power_requested_quarter_dbm = Some(60);
+        gateway.wifi_tx_power_applied_quarter_dbm = Some(60);
+        gateway.dhcp_configured = true;
+        gateway.dhcp_started_ms = Some(1_250);
+        gateway.dhcp_configured_ms = Some(1_500);
+        gateway.dhcp_configured_total = 1;
+        gateway.dhcp_last_acquire_ms = Some(250);
+        gateway.network_started_ms = Some(1_000);
+        gateway.http_serving_started_ms = Some(1_600);
+        gateway.network_startup_to_serving_ms = Some(600);
+        gateway.smoltcp_poll_total = 44;
+        gateway.last_smoltcp_poll_ms = Some(1_990);
+        gateway.smoltcp_poll_gap_max_ms = 111;
+        gateway.smoltcp_poll_delay_miss_total = 4;
+        gateway.smoltcp_poll_bad_gap_total = 2;
+        gateway.http_requests_total = 9;
+        gateway.http_success_total = 8;
+        gateway.http_send_error_total = 1;
+        gateway.http_socket_abort_total = 3;
+        gateway.http_active_sockets = 1;
+        gateway.http_listening_sockets = 1;
+        gateway.http_closed_sockets = 2;
+        gateway.http_established_sockets = 1;
+        gateway.http_close_wait_sockets = 1;
+        gateway.http_time_wait_sockets = 1;
+        gateway.http_oldest_socket_age_ms = Some(1234);
+        gateway.last_http_request_ms = Some(1_750);
+        gateway.last_http_success_ms = Some(1_700);
+        gateway.network_recovery_total = 2;
+        gateway.main_loop_gap_last_ms = 12;
+        gateway.main_loop_gap_max_ms = 5_001;
+        gateway.scheduler_tick_last_ms = 34;
+        gateway.scheduler_tick_max_ms = 5_002;
+        gateway.lora_service_last_ms = 56;
+        gateway.lora_service_max_ms = 78;
+        gateway.http_service_last_ms = 9;
+        gateway.http_service_max_ms = 10;
         gateway.diagnostic_events = 3;
         gateway.diagnostic_dropped = 1;
         gateway.diagnostic_errors = 1;
@@ -820,7 +1519,7 @@ mod tests
         store.update_producer(producer_id, telemetry).unwrap();
         store.record_poll_success(producer_id, 1_000).unwrap();
 
-        let rendered = render_prometheus::<4, 12288>(&store.snapshot()).unwrap();
+        let rendered = render_prometheus::<4, 24576>(&store.snapshot()).unwrap();
 
         assert!(rendered.contains("muninn_gate_up 1"));
         assert!(rendered.contains("muninn_gate_tx_power_level 14"));
@@ -840,6 +1539,46 @@ mod tests
         assert!(rendered.contains("muninn_gate_radio_last_tx_airtime_ms 123"));
         assert!(rendered.contains("muninn_gate_last_poll_latency_ms 128"));
         assert!(rendered.contains("muninn_gate_gateway_poll_success_rate 1.000"));
+        assert!(rendered.contains("muninn_gate_wifi_connected 1"));
+        assert!(rendered.contains("muninn_gate_wifi_disconnect_total 2"));
+        assert!(rendered.contains("muninn_gate_wifi_last_disconnect_reason 2"));
+        assert!(rendered.contains("muninn_gate_wifi_connect_request_total 3"));
+        assert!(rendered.contains("muninn_gate_wifi_connect_request_error_total 1"));
+        assert!(rendered.contains("muninn_gate_wifi_deep_recovery_total 1"));
+        assert!(rendered.contains("muninn_gate_wifi_rssi_dbm -55"));
+        assert!(rendered.contains("muninn_gate_wifi_channel 6"));
+        assert!(rendered.contains("muninn_gate_wifi_ap_info{bssid=\"01:02:03:04:05:06\"} 1"));
+        assert!(rendered.contains("muninn_gate_wifi_auth_mode 3"));
+        assert!(rendered.contains("muninn_gate_wifi_tx_power_requested_quarter_dbm 60"));
+        assert!(rendered.contains("muninn_gate_wifi_tx_power_applied_quarter_dbm 60"));
+        assert!(rendered.contains("muninn_gate_dhcp_configured 1"));
+        assert!(rendered.contains("muninn_gate_dhcp_configured_total 1"));
+        assert!(rendered.contains("muninn_gate_dhcp_last_acquire_ms 250"));
+        assert!(rendered.contains("muninn_gate_smoltcp_poll_total 44"));
+        assert!(rendered.contains("muninn_gate_smoltcp_ms_since_last_poll 10"));
+        assert!(rendered.contains("muninn_gate_smoltcp_poll_gap_max_ms 111"));
+        assert!(rendered.contains("muninn_gate_smoltcp_poll_delay_miss_total 4"));
+        assert!(rendered.contains("muninn_gate_smoltcp_poll_bad_gap_total 2"));
+        assert!(rendered.contains("muninn_gate_http_requests_total 9"));
+        assert!(rendered.contains("muninn_gate_http_success_total 8"));
+        assert!(rendered.contains("muninn_gate_http_send_error_total 1"));
+        assert!(rendered.contains("muninn_gate_http_socket_abort_total 3"));
+        assert!(rendered.contains("muninn_gate_http_active_sockets 1"));
+        assert!(rendered.contains("muninn_gate_http_listening_sockets 1"));
+        assert!(rendered.contains("muninn_gate_http_closed_sockets 2"));
+        assert!(rendered.contains("muninn_gate_http_established_sockets 1"));
+        assert!(rendered.contains("muninn_gate_http_close_wait_sockets 1"));
+        assert!(rendered.contains("muninn_gate_http_time_wait_sockets 1"));
+        assert!(rendered.contains("muninn_gate_http_oldest_socket_age_ms 1234"));
+        assert!(rendered.contains("muninn_gate_http_last_request_age_ms 250"));
+        assert!(rendered.contains("muninn_gate_http_last_success_age_ms 300"));
+        assert!(rendered.contains("muninn_gate_network_recovery_total 2"));
+        assert!(rendered.contains("muninn_gate_main_loop_gap_last_ms 12"));
+        assert!(rendered.contains("muninn_gate_main_loop_gap_max_ms 5001"));
+        assert!(rendered.contains("muninn_gate_scheduler_tick_last_ms 34"));
+        assert!(rendered.contains("muninn_gate_scheduler_tick_max_ms 5002"));
+        assert!(rendered.contains("muninn_gate_lora_service_max_ms 78"));
+        assert!(rendered.contains("muninn_gate_http_service_max_ms 10"));
         assert!(rendered.contains("muninn_gate_diagnostic_events 3"));
         assert!(rendered.contains("muninn_gate_diagnostic_dropped_total 1"));
         assert!(rendered.contains("muninn_gate_diagnostic_error_events 1"));
@@ -907,14 +1646,12 @@ mod tests
         sample: &str,
     )
     {
-        let help = find_required(rendered, &format!("# HELP {family} "));
-        let metric_type = find_required(rendered, &format!("# TYPE {family} "));
+        let family_sample = find_required(rendered, &format!("{family}{{"));
         let sample = find_required(rendered, sample);
-        let next_help = find_required(rendered, &format!("# HELP {next_family} "));
+        let next_sample = find_required(rendered, &format!("{next_family}{{"));
 
-        assert!(help < metric_type);
-        assert!(metric_type < sample);
-        assert!(sample < next_help);
+        assert!(family_sample <= sample);
+        assert!(sample < next_sample);
     }
 
     fn find_required(rendered: &str, needle: &str) -> usize

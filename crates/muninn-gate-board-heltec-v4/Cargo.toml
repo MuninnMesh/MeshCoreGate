@@ -6,6 +6,10 @@ edition = "2024"
 [lib]
 path = "src/lib.rs"
 
+[features]
+default = []
+serial-json = ["muninn-gate-platform-esp32/serial-json"]
+
 [dependencies]
 muninn-gate-core.workspace = true
 muninn-gate-platform-esp32.workspace = true

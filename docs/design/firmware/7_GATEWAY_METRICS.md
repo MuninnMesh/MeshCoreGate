@@ -148,6 +148,117 @@ Prometheus metrics:
 
 These output estimates are for UI, telemetry, and display context. They are not regulatory certification data. Compliance decisions must account for region, frequency, duty cycle, antenna gain, feedline loss, and board variance.
 
+### WiFi And DHCP
+
+WiFi metrics describe the gateway's ESP32 station link and DHCP state. They are
+gateway-scoped and independent of LoRa producer RSSI/SNR.
+
+Current fields:
+
+- `wifi_connected`: whether the ESP32 station is currently associated.
+- `wifi_disconnect_total`: WiFi disconnect events observed since boot.
+- `wifi_last_disconnect_reason`: latest raw ESP WiFi disconnect reason.
+- `wifi_connect_request_total`: connect requests issued by firmware.
+- `wifi_connect_request_error_total`: connect requests that returned an
+  immediate driver error.
+- `wifi_deep_recovery_total`: controller stop/start recoveries since boot.
+- `wifi_rssi_dbm`, `wifi_channel`, `wifi_bssid`, `wifi_auth_mode`: latest
+  associated AP information.
+- `wifi_tx_power_requested_quarter_dbm` and
+  `wifi_tx_power_applied_quarter_dbm`: requested and read-back ESP WiFi TX
+  power caps.
+- `dhcp_configured`: whether an IPv4 lease is currently installed.
+- `dhcp_configured_total`, `dhcp_deconfigured_total`, `dhcp_reset_total`, and
+  `dhcp_timeout_total`: DHCP lifecycle counters.
+- `dhcp_last_acquire_ms`: latest DHCP acquisition duration.
+- `dhcp_ip` and `dhcp_gateway`: current IPv4 address and default gateway.
+
+Prometheus metrics:
+
+- `muninn_gate_wifi_connected`
+- `muninn_gate_wifi_disconnect_total`
+- `muninn_gate_wifi_last_disconnect_reason`
+- `muninn_gate_wifi_connect_request_total`
+- `muninn_gate_wifi_connect_request_error_total`
+- `muninn_gate_wifi_deep_recovery_total`
+- `muninn_gate_wifi_rssi_dbm`
+- `muninn_gate_wifi_channel`
+- `muninn_gate_wifi_ap_info{bssid="..."}`
+- `muninn_gate_wifi_auth_mode`
+- `muninn_gate_wifi_tx_power_requested_quarter_dbm`
+- `muninn_gate_wifi_tx_power_applied_quarter_dbm`
+- `muninn_gate_dhcp_configured`
+- `muninn_gate_dhcp_configured_total`
+- `muninn_gate_dhcp_deconfigured_total`
+- `muninn_gate_dhcp_reset_total`
+- `muninn_gate_dhcp_timeout_total`
+- `muninn_gate_dhcp_last_acquire_ms`
+
+The ESP32 chunked HTTP path also emits age-style bring-up gauges such as
+`muninn_gate_wifi_connect_started_age_ms`,
+`muninn_gate_wifi_connected_age_ms`, `muninn_gate_dhcp_started_age_ms`,
+`muninn_gate_dhcp_configured_age_ms`, and
+`muninn_gate_network_startup_to_serving_ms`. These are operational diagnostics
+for startup and reconnect timing.
+
+### HTTP And Loop Health
+
+HTTP and loop metrics describe whether the gateway can continue serving
+Prometheus while smoltcp, LoRa, scheduler, display, and serial work share one
+cooperative firmware loop.
+
+Current fields:
+
+- `smoltcp_poll_total`: smoltcp interface polls since boot.
+- `last_smoltcp_poll_ms`: latest smoltcp poll timestamp.
+- `smoltcp_poll_gap_max_ms`: longest gap between smoltcp polls.
+- `smoltcp_poll_delay_miss_total`: poll gaps over the warning threshold.
+- `smoltcp_poll_bad_gap_total`: poll gaps large enough to explain ping/curl
+  loss.
+- `http_requests_total`, `http_success_total`, and
+  `http_send_error_total`: request/response counters for the embedded server.
+- `http_socket_abort_total`: TCP sockets explicitly aborted by the HTTP server.
+- `http_*_sockets`: current socket-state census.
+- `http_oldest_*_ms`: oldest active socket age by TCP state.
+- `network_recovery_total`: firmware-forced network recovery actions.
+- `main_loop_gap_*`, `scheduler_tick_*`, `lora_service_*`, and
+  `http_service_*`: cooperative loop timing exposed by the current HTTP path.
+- `display_refresh_*` and `serial_emit_*`: reserved in `GatewayMetrics` for
+  deeper loop attribution, but not part of the current default `/metrics`
+  output.
+
+Prometheus metrics:
+
+- `muninn_gate_smoltcp_poll_total`
+- `muninn_gate_smoltcp_ms_since_last_poll`
+- `muninn_gate_smoltcp_poll_gap_max_ms`
+- `muninn_gate_smoltcp_poll_delay_miss_total`
+- `muninn_gate_smoltcp_poll_bad_gap_total`
+- `muninn_gate_http_requests_total`
+- `muninn_gate_http_success_total`
+- `muninn_gate_http_send_error_total`
+- `muninn_gate_http_socket_abort_total`
+- `muninn_gate_http_active_sockets`
+- `muninn_gate_http_listening_sockets`
+- `muninn_gate_http_sockets{state="..."}`
+- `muninn_gate_http_oldest_socket_age_ms{state="..."}`
+- `muninn_gate_http_last_request_age_ms`
+- `muninn_gate_http_last_success_age_ms`
+- `muninn_gate_network_recovery_total`
+- `muninn_gate_main_loop_gap_last_ms`
+- `muninn_gate_main_loop_gap_max_ms`
+- `muninn_gate_scheduler_tick_last_ms`
+- `muninn_gate_scheduler_tick_max_ms`
+- `muninn_gate_lora_service_last_ms`
+- `muninn_gate_lora_service_max_ms`
+- `muninn_gate_http_service_last_ms`
+- `muninn_gate_http_service_max_ms`
+
+The socket-state labels are useful for review and operations because a listener
+pool outage is visible immediately: `state="listen"` should normally stay close
+to the configured socket count, while old `established`, `close_wait`, or
+`time_wait` sockets should age out or be aborted.
+
 ### Producer Telemetry
 
 Producer telemetry is still rendered through the same snapshot, but it is not gateway telemetry. Producer metrics use a `node` label and represent last-known values from the remote telemetry producer.
@@ -265,9 +376,7 @@ Display code should avoid parsing Prometheus text. It should consume `GatewayMet
 
 Add fields when a concrete subsystem can update them accurately. Likely next additions:
 
-- radio CRC error and timeout counters
 - MeshCore decode failure counters
-- HTTP request and render failure counters
 - serial output drop counters
 - config generation or saved-at monotonic timestamp
 - queue depth or dropped event counters

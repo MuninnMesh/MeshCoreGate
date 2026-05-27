@@ -84,7 +84,7 @@ static TX_ACTIVE: AtomicBool = AtomicBool::new(false);
 static RADIO_READY: AtomicBool = AtomicBool::new(false);
 /// Latest board battery voltage sampled by the radio owner task.
 static BATTERY_MV: AtomicU32 = AtomicU32::new(0);
-/// Frames waiting to be transmitted by the APP CPU radio owner.
+/// Frames waiting to be transmitted by the radio owner.
 static RADIO_TX_QUEUE: Mutex<RefCell<Deque<MeshTxFrame, RADIO_TX_QUEUE_LEN>>> =
     Mutex::new(RefCell::new(Deque::new()));
 /// Received frames waiting for the MeshCore adapter.
@@ -93,6 +93,28 @@ static RADIO_RX_QUEUE: Mutex<RefCell<Deque<MeshRxFrame, RADIO_RX_QUEUE_LEN>>> =
 
 type BatteryAdc = Adc<'static, ADC1<'static>, Blocking>;
 type BatteryAdcPin = AdcPin<GPIO1<'static>, ADC1<'static>, AdcCalLine<ADC1<'static>>>;
+type LoraSpiDevice = ExclusiveDevice<Spi<'static, Blocking>, Output<'static>, Delay>;
+type BoardMeshRadio = MeshRadio<
+    LoraSpiDevice,
+    Output<'static>,
+    Input<'static>,
+    Output<'static>,
+    Input<'static>,
+    HeltecV4Fem,
+    EspRadioClock,
+>;
+
+/// Error returned while constructing the board radio owner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RadioOwnerStartError
+{
+    /// SX126x SPI bus initialization failed.
+    SpiInit,
+    /// SX126x SPI device wrapper initialization failed.
+    SpiDevice,
+    /// SX126x initialization failed.
+    RadioInit,
+}
 
 /// Blocking clock used by the dedicated ESP32 radio owner core.
 #[derive(Debug, Clone, Copy)]
@@ -241,7 +263,10 @@ pub fn try_dequeue_rx_frame() -> Option<MeshRxFrame>
     critical_section::with(|cs| RADIO_RX_QUEUE.borrow_ref_mut(cs).pop_front())
 }
 
-/// Run the APP CPU radio owner task.
+/// Run the legacy dedicated-core radio owner task.
+///
+/// The current reliability baseline uses [`CooperativeRadioOwner`] instead, so
+/// WiFi, HTTP, scheduler, and LoRa service share one explicit polling loop.
 pub fn run_radio_owner_task(
     resources: Esp32RadioResources,
     radio_config: MeshRadioConfig,
@@ -251,6 +276,206 @@ pub fn run_radio_owner_task(
     RADIO_READY.store(false, Ordering::Relaxed);
     register_gateway_radio_host(tx_power);
     block_on(run_radio_owner_loop(resources, radio_config, tx_power))
+}
+
+/// Cooperative SX126x/MeshCore owner serviced by the WiFi/HTTP loop.
+///
+/// This keeps the Espressif WiFi runtime on a single CPU. Field testing showed
+/// that starting an independent APP-core radio loop can corrupt the proprietary
+/// WiFi blob on ESP32-S3, even when the radio task has a large stack.
+pub struct CooperativeRadioOwner
+{
+    radio:              BoardMeshRadio,
+    battery:            BatterySampler,
+    tx_power:           TxPowerMapping,
+    consecutive_errors: u8,
+    rx_started:         bool,
+    rx_start_ms:        u64,
+    last_health_ms:     u64,
+    next_tx_time_ms:    u64,
+}
+
+impl CooperativeRadioOwner
+{
+    /// Initialize the board radio and return a cooperative owner.
+    pub fn new(
+        resources: Esp32RadioResources,
+        radio_config: MeshRadioConfig,
+        tx_power: TxPowerMapping,
+        now_ms: u64,
+    ) -> Result<Self, RadioOwnerStartError>
+    {
+        RADIO_READY.store(false, Ordering::Relaxed);
+        register_gateway_radio_host(tx_power);
+
+        let mut battery = BatterySampler::new(
+            resources.battery_adc,
+            resources.battery_pin,
+            resources.battery_enable,
+        );
+        battery.sample();
+
+        let spi_bus = Spi::new(
+            resources.spi2,
+            SpiConfig::default()
+                .with_frequency(Rate::from_hz(LORA_SPI_FREQUENCY_HZ))
+                .with_mode(Mode::_0),
+        )
+        .map_err(|_| RadioOwnerStartError::SpiInit)?
+        .with_sck(resources.sck)
+        .with_mosi(resources.mosi)
+        .with_miso(resources.miso);
+
+        let lora_nss = Output::new(resources.nss, Level::High, OutputConfig::default());
+        let lora_reset = Output::new(resources.reset, Level::High, OutputConfig::default());
+        let lora_busy = Input::new(resources.busy, InputConfig::default().with_pull(Pull::None));
+        let lora_dio1 = Input::new(resources.dio1, InputConfig::default().with_pull(Pull::None));
+        let lora_ant = Output::new(resources.ant, Level::High, OutputConfig::default());
+        let lora_spi = ExclusiveDevice::new(spi_bus, lora_nss, Delay::new())
+            .map_err(|_| RadioOwnerStartError::SpiDevice)?;
+        let device = SX126x::new(lora_spi, (lora_reset, lora_busy, lora_ant, lora_dio1));
+        let rf_switch = HeltecV4Fem::new(resources.fem_power, resources.fem_en, resources.fem_pa);
+
+        let radio = block_on(MeshRadio::init(
+            device,
+            rf_switch,
+            EspRadioClock,
+            radio_config,
+        ))
+        .map_err(|_| RadioOwnerStartError::RadioInit)?;
+
+        record_radio_event(
+            DiagnosticLevel::Info,
+            "radio_initialized",
+            "SX1262 radio initialized cooperatively on WiFi core",
+        );
+
+        Ok(Self {
+            radio,
+            battery,
+            tx_power,
+            consecutive_errors: 0,
+            rx_started: false,
+            rx_start_ms: now_ms.saturating_add(RADIO_RX_START_DELAY_MS),
+            last_health_ms: now_ms,
+            next_tx_time_ms: now_ms,
+        })
+    }
+
+    /// Service one bounded radio owner pass.
+    pub fn service(&mut self)
+    {
+        let now = Instant::now();
+        let now_ms = now.as_millis();
+
+        if !self.rx_started && now_ms >= self.rx_start_ms {
+            if self.radio.start_rx().is_err() {
+                record_radio_event(
+                    DiagnosticLevel::Error,
+                    "radio_rx_start_failed",
+                    "SX1262 continuous RX start failed",
+                );
+            } else {
+                self.rx_started = true;
+                RADIO_READY.store(true, Ordering::Relaxed);
+                record_radio_event(
+                    DiagnosticLevel::Info,
+                    "radio_rx_started",
+                    "SX1262 continuous RX started",
+                );
+            }
+        }
+
+        if now_ms.saturating_sub(self.last_health_ms) >= 1_000 {
+            self.last_health_ms = now_ms;
+            self.battery.sample();
+            self.radio.sample_health();
+            publish_radio_health(
+                now_ms,
+                self.tx_power,
+                self.radio.rx_stats(),
+                self.radio.last_tx_airtime_ms,
+            );
+        }
+
+        if self.rx_started {
+            match block_on(self.radio.poll_receive((now_ms / 1_000) as u32)) {
+                Ok(Some(frame)) => {
+                    self.consecutive_errors = 0;
+                    let stats = self.radio.rx_stats();
+                    publish_radio_health(
+                        now_ms,
+                        self.tx_power,
+                        stats,
+                        self.radio.last_tx_airtime_ms,
+                    );
+                    if enqueue_rx_frame(frame).is_err() {
+                        record_radio_event(
+                            DiagnosticLevel::Warn,
+                            "radio_rx_queue_full",
+                            "received LoRa frame dropped because RX queue is full",
+                        );
+                    }
+                },
+                Ok(None) => {
+                    self.consecutive_errors = 0;
+                },
+                Err(_) => {
+                    self.record_radio_io_error("radio_poll_failed", "SX1262 RX poll failed");
+                },
+            }
+        }
+
+        if now_ms >= self.next_tx_time_ms
+            && let Some(frame) = dequeue_tx_frame()
+        {
+            match block_on(self.radio.transmit(&frame)) {
+                Ok(MeshRadioTxStatus::Sent) => {
+                    self.consecutive_errors = 0;
+                    telemetry_state::increment_radio_tx_total();
+                    publish_radio_health(
+                        Instant::now().as_millis(),
+                        self.tx_power,
+                        self.radio.rx_stats(),
+                        self.radio.last_tx_airtime_ms,
+                    );
+                    self.next_tx_time_ms = Instant::now().as_millis().saturating_add(
+                        u64::from(self.radio.last_tx_airtime_ms)
+                            .saturating_mul(u64::from(RADIO_AIRTIME_BUDGET_FACTOR)),
+                    );
+                },
+                Err(_) => {
+                    self.record_radio_io_error(
+                        "radio_tx_failed",
+                        "queued MeshCore TX frame failed",
+                    );
+                },
+            }
+        }
+    }
+
+    fn record_radio_io_error(&mut self, code: &str, message: &str)
+    {
+        self.consecutive_errors = self.consecutive_errors.saturating_add(1);
+        record_radio_event(DiagnosticLevel::Warn, code, message);
+        if self.consecutive_errors >= RADIO_REINIT_ERROR_THRESHOLD {
+            record_radio_event(
+                DiagnosticLevel::Warn,
+                "radio_reinit",
+                "SX1262 radio reinitializing after repeated errors",
+            );
+            if block_on(self.radio.reinit()).is_err() {
+                record_radio_event(
+                    DiagnosticLevel::Error,
+                    "radio_reinit_failed",
+                    "SX1262 radio reinitialization failed",
+                );
+            }
+            self.consecutive_errors = 0;
+            self.rx_started = true;
+            RADIO_READY.store(true, Ordering::Relaxed);
+        }
+    }
 }
 
 async fn run_radio_owner_loop(
@@ -313,7 +538,7 @@ async fn run_radio_owner_loop(
             record_radio_event(
                 DiagnosticLevel::Info,
                 "radio_initialized",
-                "SX1262 radio initialized on APP CPU",
+                "SX1262 radio initialized on dedicated core",
             );
             radio
         },

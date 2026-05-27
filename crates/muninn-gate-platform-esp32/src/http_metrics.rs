@@ -160,8 +160,8 @@ pub fn render_http_header(
     Ok(header)
 }
 
-/// Render an HTTP/1.1 response header whose body is delimited by connection close.
-pub fn render_stream_header(
+/// Render an HTTP/1.1 response header for chunked streaming.
+pub fn render_chunked_header(
     status: &str,
     content_type: &str,
 ) -> Result<heapless::String<HTTP_HEADER_BUFFER_BYTES>, Error>
@@ -169,7 +169,8 @@ pub fn render_stream_header(
     let mut header = heapless::String::new();
     write!(
         header,
-        "HTTP/1.1 {}\r\nContent-Type: {}\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {}\r\nContent-Type: {}\r\nTransfer-Encoding: chunked\r\nConnection: \
+         close\r\n\r\n",
         status, content_type,
     )?;
     Ok(header)

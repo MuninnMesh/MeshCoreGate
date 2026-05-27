@@ -445,72 +445,268 @@ fn lpp_value_length(data_type: u8) -> Option<usize>
     }
 }
 
+/// Current HTTP TCP socket-state census.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct HttpSocketStateSnapshot
+{
+    /// Current active HTTP TCP sockets.
+    pub active:                 u8,
+    /// Current listening HTTP TCP sockets.
+    pub listening:              u8,
+    /// Current closed HTTP TCP sockets.
+    pub closed:                 u8,
+    /// Current HTTP TCP sockets in SYN-SENT.
+    pub syn_sent:               u8,
+    /// Current HTTP TCP sockets in SYN-RECEIVED.
+    pub syn_received:           u8,
+    /// Current established HTTP TCP sockets.
+    pub established:            u8,
+    /// Current HTTP TCP sockets in FIN-WAIT-1.
+    pub fin_wait_1:             u8,
+    /// Current HTTP TCP sockets in FIN-WAIT-2.
+    pub fin_wait_2:             u8,
+    /// Current HTTP TCP sockets in CLOSE-WAIT.
+    pub close_wait:             u8,
+    /// Current HTTP TCP sockets in CLOSING.
+    pub closing:                u8,
+    /// Current HTTP TCP sockets in LAST-ACK.
+    pub last_ack:               u8,
+    /// Current HTTP TCP sockets in TIME-WAIT.
+    pub time_wait:              u8,
+    /// Oldest non-listening/non-closed socket age in milliseconds.
+    pub oldest_socket_age_ms:   Option<u32>,
+    /// Oldest SYN-SENT socket age in milliseconds.
+    pub oldest_syn_sent_ms:     Option<u32>,
+    /// Oldest SYN-RECEIVED socket age in milliseconds.
+    pub oldest_syn_received_ms: Option<u32>,
+    /// Oldest established socket age in milliseconds.
+    pub oldest_established_ms:  Option<u32>,
+    /// Oldest FIN-WAIT-1 socket age in milliseconds.
+    pub oldest_fin_wait_1_ms:   Option<u32>,
+    /// Oldest FIN-WAIT-2 socket age in milliseconds.
+    pub oldest_fin_wait_2_ms:   Option<u32>,
+    /// Oldest CLOSE-WAIT socket age in milliseconds.
+    pub oldest_close_wait_ms:   Option<u32>,
+    /// Oldest CLOSING socket age in milliseconds.
+    pub oldest_closing_ms:      Option<u32>,
+    /// Oldest LAST-ACK socket age in milliseconds.
+    pub oldest_last_ack_ms:     Option<u32>,
+    /// Oldest TIME-WAIT socket age in milliseconds.
+    pub oldest_time_wait_ms:    Option<u32>,
+}
+
 /// Gateway-wide telemetry and health metrics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct GatewayMetrics
 {
     /// Gateway uptime in milliseconds.
-    pub uptime_ms:                       u64,
+    pub uptime_ms:                           u64,
     /// Successful scheduled producer polls since boot.
-    pub poll_success_total:              u64,
+    pub poll_success_total:                  u64,
     /// Failed scheduled producer polls since boot.
-    pub poll_failure_total:              u64,
+    pub poll_failure_total:                  u64,
     /// Scheduled producer polls that were deferred for retry since boot.
-    pub poll_retry_total:                u64,
+    pub poll_retry_total:                    u64,
     /// Operator-requested immediate poll passes since boot.
-    pub poll_on_demand_total:            u64,
+    pub poll_on_demand_total:                u64,
     /// Radio receive packets observed by the gateway since boot.
-    pub radio_rx_total:                  u64,
+    pub radio_rx_total:                      u64,
     /// Radio transmit packets sent by the gateway since boot.
-    pub radio_tx_total:                  u64,
+    pub radio_tx_total:                      u64,
     /// Radio packets rejected by CRC since boot.
-    pub radio_rx_crc_error_total:        u64,
+    pub radio_rx_crc_error_total:            u64,
     /// Radio packets rejected by header error since boot.
-    pub radio_rx_header_error_total:     u64,
+    pub radio_rx_header_error_total:         u64,
     /// Radio RX timeout IRQ count since boot.
-    pub radio_rx_timeout_total:          u64,
+    pub radio_rx_timeout_total:              u64,
     /// Latest SX126x device error bitmask.
-    pub radio_device_error_bits:         u16,
+    pub radio_device_error_bits:             u16,
     /// RSSI from the latest decoded LoRa packet in dBm.
-    pub radio_last_rssi_dbm:             Option<i16>,
+    pub radio_last_rssi_dbm:                 Option<i16>,
     /// SNR from the latest decoded LoRa packet in tenths of a dB.
-    pub radio_last_snr_tenth_db:         Option<i16>,
+    pub radio_last_snr_tenth_db:             Option<i16>,
     /// Rolling idle-RX noise floor estimate in dBm.
-    pub radio_noise_floor_dbm:           Option<i16>,
+    pub radio_noise_floor_dbm:               Option<i16>,
     /// Latest idle-RX instantaneous RSSI sample in dBm.
-    pub radio_rssi_inst_dbm:             Option<i16>,
+    pub radio_rssi_inst_dbm:                 Option<i16>,
     /// Latest sampled SX126x chip mode nibble.
-    pub radio_chip_mode:                 Option<u8>,
+    pub radio_chip_mode:                     Option<u8>,
     /// TX power most recently applied to the radio in dBm.
-    pub radio_last_applied_tx_power_dbm: Option<i8>,
+    pub radio_last_applied_tx_power_dbm:     Option<i8>,
     /// Airtime of the latest successful TX in milliseconds.
-    pub radio_last_tx_airtime_ms:        Option<u32>,
+    pub radio_last_tx_airtime_ms:            Option<u32>,
     /// Monotonic timestamp of the most recent scheduled poll attempt.
-    pub last_poll_ms:                    Option<u64>,
+    pub last_poll_ms:                        Option<u64>,
     /// Selected board/radio TX power level, after board mapping.
-    pub tx_power_level:                  Option<i8>,
+    pub tx_power_level:                      Option<i8>,
     /// Board-estimated conducted TX output in tenths of dBm.
-    pub tx_output_dbm_tenths:            Option<i16>,
+    pub tx_output_dbm_tenths:                Option<i16>,
     /// Board-estimated conducted TX output in milliwatts.
-    pub tx_output_milliwatts:            Option<u16>,
+    pub tx_output_milliwatts:                Option<u16>,
     /// Gateway battery voltage in millivolts, when the board can measure it.
-    pub battery_voltage_mv:              Option<u16>,
+    pub battery_voltage_mv:                  Option<u16>,
     /// Gateway battery charge percentage, when the board can estimate it.
-    pub battery_percent:                 Option<u8>,
+    pub battery_percent:                     Option<u8>,
     /// Latest completed scheduled poll latency in milliseconds.
-    pub last_poll_latency_ms:            Option<u32>,
+    pub last_poll_latency_ms:                Option<u32>,
     /// Rolling average scheduled poll latency in milliseconds.
-    pub avg_poll_latency_ms:             Option<u32>,
+    pub avg_poll_latency_ms:                 Option<u32>,
+    /// Whether the WiFi station is currently associated.
+    pub wifi_connected:                      bool,
+    /// Monotonic timestamp of the latest WiFi connect request.
+    pub wifi_connect_started_ms:             Option<u64>,
+    /// Monotonic timestamp of the latest successful WiFi association.
+    pub wifi_connected_ms:                   Option<u64>,
+    /// WiFi disconnect events observed since boot.
+    pub wifi_disconnect_total:               u64,
+    /// Latest WiFi disconnect reason code.
+    pub wifi_last_disconnect_reason:         Option<u8>,
+    /// WiFi connect requests issued by firmware since boot.
+    pub wifi_connect_request_total:          u64,
+    /// WiFi connect requests that returned an immediate error.
+    pub wifi_connect_request_error_total:    u64,
+    /// WiFi controller stop/start recoveries since boot.
+    pub wifi_deep_recovery_total:            u64,
+    /// Latest associated AP RSSI in dBm.
+    pub wifi_rssi_dbm:                       Option<i16>,
+    /// Latest associated AP primary channel.
+    pub wifi_channel:                        Option<u8>,
+    /// Latest associated AP BSSID.
+    pub wifi_bssid:                          Option<[u8; 6]>,
+    /// Latest associated AP auth mode as reported by ESP-IDF.
+    pub wifi_auth_mode:                      Option<u8>,
+    /// Requested ESP WiFi TX power cap in quarter-dBm units.
+    pub wifi_tx_power_requested_quarter_dbm: Option<i8>,
+    /// Applied ESP WiFi TX power cap in quarter-dBm units.
+    pub wifi_tx_power_applied_quarter_dbm:   Option<i8>,
+    /// Whether DHCP currently has a configured IPv4 lease.
+    pub dhcp_configured:                     bool,
+    /// Monotonic timestamp of the latest DHCP acquisition start.
+    pub dhcp_started_ms:                     Option<u64>,
+    /// Monotonic timestamp of the latest DHCP configured event.
+    pub dhcp_configured_ms:                  Option<u64>,
+    /// DHCP configured events since boot.
+    pub dhcp_configured_total:               u64,
+    /// DHCP deconfigured events since boot.
+    pub dhcp_deconfigured_total:             u64,
+    /// DHCP reset calls since boot.
+    pub dhcp_reset_total:                    u64,
+    /// DHCP timeouts that forced WiFi reconnect since boot.
+    pub dhcp_timeout_total:                  u64,
+    /// Latest DHCP acquisition duration in milliseconds.
+    pub dhcp_last_acquire_ms:                Option<u32>,
+    /// Current DHCP IPv4 address.
+    pub dhcp_ip:                             Option<[u8; 4]>,
+    /// Current DHCP default gateway.
+    pub dhcp_gateway:                        Option<[u8; 4]>,
+    /// Monotonic timestamp of the current network startup attempt.
+    pub network_started_ms:                  Option<u64>,
+    /// Monotonic timestamp when HTTP last began serving.
+    pub http_serving_started_ms:             Option<u64>,
+    /// Latest network startup-to-serving duration in milliseconds.
+    pub network_startup_to_serving_ms:       Option<u32>,
+    /// smoltcp interface polls since boot.
+    pub smoltcp_poll_total:                  u64,
+    /// Monotonic timestamp of the latest smoltcp poll.
+    pub last_smoltcp_poll_ms:                Option<u64>,
+    /// Longest observed gap between smoltcp interface polls.
+    pub smoltcp_poll_gap_max_ms:             u32,
+    /// smoltcp poll gaps that exceeded the diagnostic deadline.
+    pub smoltcp_poll_delay_miss_total:       u64,
+    /// smoltcp poll gaps that exceeded the bad-gap threshold.
+    pub smoltcp_poll_bad_gap_total:          u64,
+    /// HTTP requests accepted by the embedded server since boot.
+    pub http_requests_total:                 u64,
+    /// HTTP responses completed successfully since boot.
+    pub http_success_total:                  u64,
+    /// HTTP responses aborted while sending since boot.
+    pub http_send_error_total:               u64,
+    /// TCP sockets explicitly aborted by the HTTP server since boot.
+    pub http_socket_abort_total:             u64,
+    /// Current active HTTP TCP sockets.
+    pub http_active_sockets:                 u8,
+    /// Current listening HTTP TCP sockets.
+    pub http_listening_sockets:              u8,
+    /// Current closed HTTP TCP sockets.
+    pub http_closed_sockets:                 u8,
+    /// Current HTTP TCP sockets in SYN-SENT.
+    pub http_syn_sent_sockets:               u8,
+    /// Current HTTP TCP sockets in SYN-RECEIVED.
+    pub http_syn_received_sockets:           u8,
+    /// Current established HTTP TCP sockets.
+    pub http_established_sockets:            u8,
+    /// Current HTTP TCP sockets in FIN-WAIT-1.
+    pub http_fin_wait_1_sockets:             u8,
+    /// Current HTTP TCP sockets in FIN-WAIT-2.
+    pub http_fin_wait_2_sockets:             u8,
+    /// Current HTTP TCP sockets in CLOSE-WAIT.
+    pub http_close_wait_sockets:             u8,
+    /// Current HTTP TCP sockets in CLOSING.
+    pub http_closing_sockets:                u8,
+    /// Current HTTP TCP sockets in LAST-ACK.
+    pub http_last_ack_sockets:               u8,
+    /// Current HTTP TCP sockets in TIME-WAIT.
+    pub http_time_wait_sockets:              u8,
+    /// Oldest non-listening/non-closed HTTP socket age in milliseconds.
+    pub http_oldest_socket_age_ms:           Option<u32>,
+    /// Oldest SYN-SENT HTTP socket age in milliseconds.
+    pub http_oldest_syn_sent_ms:             Option<u32>,
+    /// Oldest SYN-RECEIVED HTTP socket age in milliseconds.
+    pub http_oldest_syn_received_ms:         Option<u32>,
+    /// Oldest established HTTP socket age in milliseconds.
+    pub http_oldest_established_ms:          Option<u32>,
+    /// Oldest FIN-WAIT-1 HTTP socket age in milliseconds.
+    pub http_oldest_fin_wait_1_ms:           Option<u32>,
+    /// Oldest FIN-WAIT-2 HTTP socket age in milliseconds.
+    pub http_oldest_fin_wait_2_ms:           Option<u32>,
+    /// Oldest CLOSE-WAIT HTTP socket age in milliseconds.
+    pub http_oldest_close_wait_ms:           Option<u32>,
+    /// Oldest CLOSING HTTP socket age in milliseconds.
+    pub http_oldest_closing_ms:              Option<u32>,
+    /// Oldest LAST-ACK HTTP socket age in milliseconds.
+    pub http_oldest_last_ack_ms:             Option<u32>,
+    /// Oldest TIME-WAIT HTTP socket age in milliseconds.
+    pub http_oldest_time_wait_ms:            Option<u32>,
+    /// Monotonic timestamp of the latest accepted HTTP request.
+    pub last_http_request_ms:                Option<u64>,
+    /// Monotonic timestamp of the latest successful HTTP response.
+    pub last_http_success_ms:                Option<u64>,
+    /// Network recovery actions forced by the firmware since boot.
+    pub network_recovery_total:              u64,
+    /// Latest observed network main-loop gap in milliseconds.
+    pub main_loop_gap_last_ms:               u32,
+    /// Longest observed network main-loop gap in milliseconds.
+    pub main_loop_gap_max_ms:                u32,
+    /// Latest observed scheduler tick duration in milliseconds.
+    pub scheduler_tick_last_ms:              u32,
+    /// Longest observed scheduler tick duration in milliseconds.
+    pub scheduler_tick_max_ms:               u32,
+    /// Latest cooperative LoRa service duration in milliseconds.
+    pub lora_service_last_ms:                u32,
+    /// Longest cooperative LoRa service duration in milliseconds.
+    pub lora_service_max_ms:                 u32,
+    /// Latest HTTP service pass duration in milliseconds.
+    pub http_service_last_ms:                u32,
+    /// Longest HTTP service pass duration in milliseconds.
+    pub http_service_max_ms:                 u32,
+    /// Latest display refresh duration in milliseconds.
+    pub display_refresh_last_ms:             u32,
+    /// Longest display refresh duration in milliseconds.
+    pub display_refresh_max_ms:              u32,
+    /// Latest serial emit duration in milliseconds.
+    pub serial_emit_last_ms:                 u32,
+    /// Longest serial emit duration in milliseconds.
+    pub serial_emit_max_ms:                  u32,
     /// Platform-reported free heap bytes, when available.
-    pub free_heap_bytes:                 Option<u32>,
+    pub free_heap_bytes:                     Option<u32>,
     /// Diagnostic events currently retained by the diagnostics collector.
-    pub diagnostic_events:               u32,
+    pub diagnostic_events:                   u32,
     /// Diagnostic events dropped by the diagnostics collector.
-    pub diagnostic_dropped:              u64,
+    pub diagnostic_dropped:                  u64,
     /// Retained diagnostic events with error severity.
-    pub diagnostic_errors:               u32,
+    pub diagnostic_errors:                   u32,
     /// Timestamp of the latest retained error diagnostic.
-    pub last_error_ms:                   Option<u64>,
+    pub last_error_ms:                       Option<u64>,
 }
 
 impl GatewayMetrics
@@ -670,37 +866,110 @@ impl<const N: usize> TelemetrySnapshot<N>
     {
         Self {
             gateway: GatewayMetrics {
-                uptime_ms:                       0,
-                poll_success_total:              0,
-                poll_failure_total:              0,
-                poll_retry_total:                0,
-                poll_on_demand_total:            0,
-                radio_rx_total:                  0,
-                radio_tx_total:                  0,
-                radio_rx_crc_error_total:        0,
-                radio_rx_header_error_total:     0,
-                radio_rx_timeout_total:          0,
-                radio_device_error_bits:         0,
-                radio_last_rssi_dbm:             None,
-                radio_last_snr_tenth_db:         None,
-                radio_noise_floor_dbm:           None,
-                radio_rssi_inst_dbm:             None,
-                radio_chip_mode:                 None,
-                radio_last_applied_tx_power_dbm: None,
-                radio_last_tx_airtime_ms:        None,
-                last_poll_ms:                    None,
-                tx_power_level:                  None,
-                tx_output_dbm_tenths:            None,
-                tx_output_milliwatts:            None,
-                battery_voltage_mv:              None,
-                battery_percent:                 None,
-                last_poll_latency_ms:            None,
-                avg_poll_latency_ms:             None,
-                free_heap_bytes:                 None,
-                diagnostic_events:               0,
-                diagnostic_dropped:              0,
-                diagnostic_errors:               0,
-                last_error_ms:                   None,
+                uptime_ms:                           0,
+                poll_success_total:                  0,
+                poll_failure_total:                  0,
+                poll_retry_total:                    0,
+                poll_on_demand_total:                0,
+                radio_rx_total:                      0,
+                radio_tx_total:                      0,
+                radio_rx_crc_error_total:            0,
+                radio_rx_header_error_total:         0,
+                radio_rx_timeout_total:              0,
+                radio_device_error_bits:             0,
+                radio_last_rssi_dbm:                 None,
+                radio_last_snr_tenth_db:             None,
+                radio_noise_floor_dbm:               None,
+                radio_rssi_inst_dbm:                 None,
+                radio_chip_mode:                     None,
+                radio_last_applied_tx_power_dbm:     None,
+                radio_last_tx_airtime_ms:            None,
+                last_poll_ms:                        None,
+                tx_power_level:                      None,
+                tx_output_dbm_tenths:                None,
+                tx_output_milliwatts:                None,
+                battery_voltage_mv:                  None,
+                battery_percent:                     None,
+                last_poll_latency_ms:                None,
+                avg_poll_latency_ms:                 None,
+                wifi_connected:                      false,
+                wifi_connect_started_ms:             None,
+                wifi_connected_ms:                   None,
+                wifi_disconnect_total:               0,
+                wifi_last_disconnect_reason:         None,
+                wifi_connect_request_total:          0,
+                wifi_connect_request_error_total:    0,
+                wifi_deep_recovery_total:            0,
+                wifi_rssi_dbm:                       None,
+                wifi_channel:                        None,
+                wifi_bssid:                          None,
+                wifi_auth_mode:                      None,
+                wifi_tx_power_requested_quarter_dbm: None,
+                wifi_tx_power_applied_quarter_dbm:   None,
+                dhcp_configured:                     false,
+                dhcp_started_ms:                     None,
+                dhcp_configured_ms:                  None,
+                dhcp_configured_total:               0,
+                dhcp_deconfigured_total:             0,
+                dhcp_reset_total:                    0,
+                dhcp_timeout_total:                  0,
+                dhcp_last_acquire_ms:                None,
+                dhcp_ip:                             None,
+                dhcp_gateway:                        None,
+                network_started_ms:                  None,
+                http_serving_started_ms:             None,
+                network_startup_to_serving_ms:       None,
+                smoltcp_poll_total:                  0,
+                last_smoltcp_poll_ms:                None,
+                smoltcp_poll_gap_max_ms:             0,
+                smoltcp_poll_delay_miss_total:       0,
+                smoltcp_poll_bad_gap_total:          0,
+                http_requests_total:                 0,
+                http_success_total:                  0,
+                http_send_error_total:               0,
+                http_socket_abort_total:             0,
+                http_active_sockets:                 0,
+                http_listening_sockets:              0,
+                http_closed_sockets:                 0,
+                http_syn_sent_sockets:               0,
+                http_syn_received_sockets:           0,
+                http_established_sockets:            0,
+                http_fin_wait_1_sockets:             0,
+                http_fin_wait_2_sockets:             0,
+                http_close_wait_sockets:             0,
+                http_closing_sockets:                0,
+                http_last_ack_sockets:               0,
+                http_time_wait_sockets:              0,
+                http_oldest_socket_age_ms:           None,
+                http_oldest_syn_sent_ms:             None,
+                http_oldest_syn_received_ms:         None,
+                http_oldest_established_ms:          None,
+                http_oldest_fin_wait_1_ms:           None,
+                http_oldest_fin_wait_2_ms:           None,
+                http_oldest_close_wait_ms:           None,
+                http_oldest_closing_ms:              None,
+                http_oldest_last_ack_ms:             None,
+                http_oldest_time_wait_ms:            None,
+                last_http_request_ms:                None,
+                last_http_success_ms:                None,
+                network_recovery_total:              0,
+                main_loop_gap_last_ms:               0,
+                main_loop_gap_max_ms:                0,
+                scheduler_tick_last_ms:              0,
+                scheduler_tick_max_ms:               0,
+                lora_service_last_ms:                0,
+                lora_service_max_ms:                 0,
+                http_service_last_ms:                0,
+                http_service_max_ms:                 0,
+                display_refresh_last_ms:             0,
+                display_refresh_max_ms:              0,
+                serial_emit_last_ms:                 0,
+                serial_emit_max_ms:                  0,
+                free_heap_bytes:                     None,
+                diagnostic_events:                   0,
+                diagnostic_dropped:                  0,
+                diagnostic_errors:                   0,
+                last_error_ms:                       None,
             },
             records: Vec::new(),
         }

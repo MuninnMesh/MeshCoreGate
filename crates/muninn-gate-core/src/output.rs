@@ -102,6 +102,163 @@ pub fn render_gateway_serial_json<const OUT: usize>(
     if let Some(avg_poll_latency_ms) = metrics.avg_poll_latency_ms {
         write!(out, ",\"avg_poll_latency_ms\":{}", avg_poll_latency_ms)?;
     }
+    write!(
+        out,
+        ",\"wifi_connected\":{},\"wifi_disconnect_total\":{}",
+        metrics.wifi_connected, metrics.wifi_disconnect_total
+    )?;
+    if let Some(reason) = metrics.wifi_last_disconnect_reason {
+        write!(out, ",\"wifi_last_disconnect_reason\":{}", reason)?;
+    }
+    if let Some(started_ms) = metrics.wifi_connect_started_ms {
+        write!(out, ",\"wifi_connect_started_ms\":{}", started_ms)?;
+    }
+    if let Some(connected_ms) = metrics.wifi_connected_ms {
+        write!(out, ",\"wifi_connected_ms\":{}", connected_ms)?;
+    }
+    write!(
+        out,
+        ",\"wifi_connect_request_total\":{},\"wifi_connect_request_error_total\":{},\"\
+         wifi_deep_recovery_total\":{}",
+        metrics.wifi_connect_request_total,
+        metrics.wifi_connect_request_error_total,
+        metrics.wifi_deep_recovery_total
+    )?;
+    if let Some(rssi) = metrics.wifi_rssi_dbm {
+        write!(out, ",\"wifi_rssi_dbm\":{}", rssi)?;
+    }
+    if let Some(channel) = metrics.wifi_channel {
+        write!(out, ",\"wifi_channel\":{}", channel)?;
+    }
+    if let Some(bssid) = metrics.wifi_bssid {
+        write!(out, ",\"wifi_bssid\":\"")?;
+        write_mac(&mut out, bssid)?;
+        write!(out, "\"")?;
+    }
+    if let Some(auth_mode) = metrics.wifi_auth_mode {
+        write!(out, ",\"wifi_auth_mode\":{}", auth_mode)?;
+    }
+    if let Some(requested) = metrics.wifi_tx_power_requested_quarter_dbm {
+        write!(
+            out,
+            ",\"wifi_tx_power_requested_quarter_dbm\":{}",
+            requested
+        )?;
+    }
+    if let Some(applied) = metrics.wifi_tx_power_applied_quarter_dbm {
+        write!(out, ",\"wifi_tx_power_applied_quarter_dbm\":{}", applied)?;
+    }
+    write!(
+        out,
+        ",\"dhcp_configured\":{},\"dhcp_configured_total\":{},\"dhcp_deconfigured_total\":{},\"\
+         dhcp_reset_total\":{},\"dhcp_timeout_total\":{}",
+        metrics.dhcp_configured,
+        metrics.dhcp_configured_total,
+        metrics.dhcp_deconfigured_total,
+        metrics.dhcp_reset_total,
+        metrics.dhcp_timeout_total
+    )?;
+    if let Some(started_ms) = metrics.dhcp_started_ms {
+        write!(out, ",\"dhcp_started_ms\":{}", started_ms)?;
+    }
+    if let Some(configured_ms) = metrics.dhcp_configured_ms {
+        write!(out, ",\"dhcp_configured_ms\":{}", configured_ms)?;
+    }
+    if let Some(acquire_ms) = metrics.dhcp_last_acquire_ms {
+        write!(out, ",\"dhcp_last_acquire_ms\":{}", acquire_ms)?;
+    }
+    if let Some(ip) = metrics.dhcp_ip {
+        write!(out, ",\"dhcp_ip\":\"")?;
+        write_ipv4(&mut out, ip)?;
+        write!(out, "\"")?;
+    }
+    if let Some(gateway) = metrics.dhcp_gateway {
+        write!(out, ",\"dhcp_gateway\":\"")?;
+        write_ipv4(&mut out, gateway)?;
+        write!(out, "\"")?;
+    }
+    if let Some(started_ms) = metrics.network_started_ms {
+        write!(out, ",\"network_started_ms\":{}", started_ms)?;
+    }
+    if let Some(started_ms) = metrics.http_serving_started_ms {
+        write!(out, ",\"http_serving_started_ms\":{}", started_ms)?;
+    }
+    if let Some(duration_ms) = metrics.network_startup_to_serving_ms {
+        write!(out, ",\"network_startup_to_serving_ms\":{}", duration_ms)?;
+    }
+    write!(
+        out,
+        ",\"smoltcp_poll_total\":{},\"smoltcp_poll_gap_max_ms\":{},\"\
+         smoltcp_poll_delay_miss_total\":{},\"smoltcp_poll_bad_gap_total\":{}",
+        metrics.smoltcp_poll_total,
+        metrics.smoltcp_poll_gap_max_ms,
+        metrics.smoltcp_poll_delay_miss_total,
+        metrics.smoltcp_poll_bad_gap_total
+    )?;
+    if let Some(last_smoltcp_poll_ms) = metrics.last_smoltcp_poll_ms {
+        write!(out, ",\"last_smoltcp_poll_ms\":{}", last_smoltcp_poll_ms)?;
+    }
+    write!(
+        out,
+        ",\"http_requests_total\":{},\"http_success_total\":{},\"http_send_error_total\":{},\"\
+         http_socket_abort_total\":{}",
+        metrics.http_requests_total,
+        metrics.http_success_total,
+        metrics.http_send_error_total,
+        metrics.http_socket_abort_total
+    )?;
+    write!(
+        out,
+        ",\"http_active_sockets\":{},\"http_listening_sockets\":{},\"http_closed_sockets\":{},\"\
+         http_syn_sent_sockets\":{},\"http_syn_received_sockets\":{},\"http_established_sockets\":\
+         {},\"http_fin_wait_1_sockets\":{},\"http_fin_wait_2_sockets\":{},\"\
+         http_close_wait_sockets\":{},\"http_closing_sockets\":{},\"http_last_ack_sockets\":{},\"\
+         http_time_wait_sockets\":{}",
+        metrics.http_active_sockets,
+        metrics.http_listening_sockets,
+        metrics.http_closed_sockets,
+        metrics.http_syn_sent_sockets,
+        metrics.http_syn_received_sockets,
+        metrics.http_established_sockets,
+        metrics.http_fin_wait_1_sockets,
+        metrics.http_fin_wait_2_sockets,
+        metrics.http_close_wait_sockets,
+        metrics.http_closing_sockets,
+        metrics.http_last_ack_sockets,
+        metrics.http_time_wait_sockets
+    )?;
+    if let Some(oldest_ms) = metrics.http_oldest_socket_age_ms {
+        write!(out, ",\"http_oldest_socket_age_ms\":{}", oldest_ms)?;
+    }
+    if let Some(last_http_request_ms) = metrics.last_http_request_ms {
+        write!(out, ",\"last_http_request_ms\":{}", last_http_request_ms)?;
+    }
+    if let Some(last_http_success_ms) = metrics.last_http_success_ms {
+        write!(out, ",\"last_http_success_ms\":{}", last_http_success_ms)?;
+    }
+    write!(
+        out,
+        concat!(
+            ",\"network_recovery_total\":{},",
+            "\"main_loop_gap_last_ms\":{},",
+            "\"main_loop_gap_max_ms\":{},",
+            "\"scheduler_tick_last_ms\":{},",
+            "\"scheduler_tick_max_ms\":{},",
+            "\"lora_service_last_ms\":{},",
+            "\"lora_service_max_ms\":{},",
+            "\"http_service_last_ms\":{},",
+            "\"http_service_max_ms\":{}",
+        ),
+        metrics.network_recovery_total,
+        metrics.main_loop_gap_last_ms,
+        metrics.main_loop_gap_max_ms,
+        metrics.scheduler_tick_last_ms,
+        metrics.scheduler_tick_max_ms,
+        metrics.lora_service_last_ms,
+        metrics.lora_service_max_ms,
+        metrics.http_service_last_ms,
+        metrics.http_service_max_ms
+    )?;
     if let Some(free_heap_bytes) = metrics.free_heap_bytes {
         write!(out, ",\"free_heap_bytes\":{}", free_heap_bytes)?;
     }
@@ -250,6 +407,24 @@ fn write_optional_f32<const OUT: usize>(
 fn write_per_mille<const OUT: usize>(out: &mut String<OUT>, value: u16) -> Result<(), Error>
 {
     write!(out, "{}.{:03}", value / 1000, value % 1000)?;
+    Ok(())
+}
+
+#[cfg(feature = "serial-json")]
+fn write_mac<const OUT: usize>(out: &mut String<OUT>, mac: [u8; 6]) -> Result<(), Error>
+{
+    write!(
+        out,
+        "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+        mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
+    )?;
+    Ok(())
+}
+
+#[cfg(feature = "serial-json")]
+fn write_ipv4<const OUT: usize>(out: &mut String<OUT>, ip: [u8; 4]) -> Result<(), Error>
+{
+    write!(out, "{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3])?;
     Ok(())
 }
 
