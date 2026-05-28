@@ -4,5 +4,16 @@ version = "0.1.0"
 description = "Host-side tools for Muninn Gate firmware."
 requires-python = ">=3.11"
 dependencies = [
+    # Used by `tools/cli.py --keys` to generate Ed25519 MeshCore identities.
     "cryptography>=46.0.3",
+    # Used by `tools/monitor.py` to read the ESP32-S3 native USB-Serial/JTAG
+    # endpoint. `tools/cli.py` uses raw `termios` and does not need pyserial.
+    "pyserial>=3.5",
 ]
+
+# uv project layout — scripts live in `tools/` and are run via:
+#     uv run python tools/cli.py
+#     uv run python tools/monitor.py
+# `uv sync` provisions `.venv/` (gitignored) with the deps above.
+[tool.uv]
+package = false

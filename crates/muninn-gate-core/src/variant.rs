@@ -24,6 +24,10 @@ pub enum DisplayVariant
     Oled128x64,
     /// Monochrome 128x128 OLED display.
     Oled128x128,
+    /// Color 128x96 RGB OLED display (SSD1351 controller, RGB565).
+    Oled128x96Color,
+    /// Grayscale 128x128 OLED display (SSD1327 controller, 4-bit / 16 levels).
+    Oled128x128Grayscale,
     /// Board-specific display not represented by a built-in variant.
     Custom(&'static str),
 }

@@ -25,7 +25,8 @@ can distinguish individual readings.
 - `crates/muninn-mesh-meshcore-lib`: MeshCore-compatible protocol/data model crate.
 - `config.example.json`: provisioning example.
 - `config.example.jsonc`: commented provisioning reference.
-- `tools/cli.py`: config template and USB provisioning helper.
+- `tools/cli.py`: config template + validator + USB provisioning helper.
+- `tools/monitor.py`: ESP32-S3 serial monitor (works around `espflash monitor` non-interactive hangs).
 - `docs/codemap`: crate ownership and dependency notes.
 - `docs/design`: firmware architecture, runtime flow, and reliability notes.
 - `docs/boards`: concrete board notes and hardware policy references.

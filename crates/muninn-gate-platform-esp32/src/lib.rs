@@ -8,6 +8,8 @@
 
 extern crate alloc;
 
+/// Bifrost Gate ProS3 bring-up runner (Milestone 1 / Phase A1).
+pub mod bifrost_pros3;
 /// ESP32 runtime USB configuration updates.
 pub mod config_update;
 /// ESP32 diagnostic event retention.
@@ -56,6 +58,7 @@ use muninn_gate_core::{
 };
 use muninn_mesh_radio::MeshRadioConfig;
 
+pub use crate::bifrost_pros3::run_bifrost_pros3;
 use crate::config_update::UsbConfigUpdateService;
 use crate::display::LocalDisplay;
 use crate::platform::Esp32RadioResources;

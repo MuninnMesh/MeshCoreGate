@@ -4,8 +4,9 @@
 **/*.rs.bk
 .rustc_info.json
 
-# Python
+# Python / uv
 /.venv/
+.uv-cache/
 __pycache__/
 *.py[cod]
 *$py.class
@@ -19,9 +20,10 @@ dist/
 build/
 *.egg-info/
 
-# Temporary local planning/docs
+# Temporary local planning files
 /TODO*.md
-/docs/
+/TASK.md
+/PLAN.md
 /config.json
 /PROGRESS.md
 /*.csv

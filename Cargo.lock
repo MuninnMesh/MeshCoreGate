@@ -1388,6 +1388,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3c8dda44ff03a2f238717214da50f65d5a53b45cd213a7370424ffdb6fae815"
 
 [[package]]
+name = "muninn-gate-board-bifrost-pros3"
+version = "0.1.0"
+dependencies = [
+ "muninn-gate-core",
+ "muninn-gate-platform-esp32",
+]
+
+[[package]]
 name = "muninn-gate-board-heltec-v4"
 version = "0.1.0"
 dependencies = [
@@ -1412,6 +1420,7 @@ version = "0.1.0"
 dependencies = [
  "esp-backtrace",
  "esp-hal",
+ "muninn-gate-board-bifrost-pros3",
  "muninn-gate-board-heltec-v4",
  "muninn-gate-core",
 ]
@@ -1425,6 +1434,7 @@ dependencies = [
  "embassy-futures",
  "embassy-time",
  "embedded-graphics",
+ "embedded-hal 1.0.0",
  "embedded-hal-bus",
  "esp-alloc",
  "esp-hal",
@@ -1445,6 +1455,7 @@ dependencies = [
  "smoltcp",
  "ssd1306",
  "static_cell",
+ "u8g2-fonts",
 ]
 
 [[package]]
@@ -2059,6 +2070,15 @@ name = "typenum"
 version = "1.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40ce102ab67701b8526c123c1bab5cbe42d7040ccfd0f64af1a385808d2f43de"
+
+[[package]]
+name = "u8g2-fonts"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ce3199e4c7d98a0a47ddd5ae9cde5a4e944d316319e3208527de504f4e76032"
+dependencies = [
+ "embedded-graphics-core",
+]
 
 [[package]]
 name = "ufmt-write"

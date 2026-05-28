@@ -19,8 +19,14 @@ heltec-v4 = [
     "dep:esp-hal",
     "dep:muninn-gate-board-heltec-v4",
 ]
+bifrost-pros3 = [
+    "dep:esp-backtrace",
+    "dep:esp-hal",
+    "dep:muninn-gate-board-bifrost-pros3",
+]
 
 [dependencies]
+muninn-gate-board-bifrost-pros3 = { workspace = true, optional = true }
 muninn-gate-board-heltec-v4 = { workspace = true, optional = true }
 muninn-gate-core.workspace = true
 

@@ -87,7 +87,10 @@ impl DisplaySize
         match variant {
             DisplayVariant::Oled128x64 => Some(Self::Oled128x64),
             DisplayVariant::Oled128x128 => Some(Self::Oled128x128),
-            DisplayVariant::None | DisplayVariant::Custom(_) => None,
+            DisplayVariant::None
+            | DisplayVariant::Oled128x96Color
+            | DisplayVariant::Oled128x128Grayscale
+            | DisplayVariant::Custom(_) => None,
         }
     }
 

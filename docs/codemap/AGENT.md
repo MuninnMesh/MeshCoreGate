@@ -73,6 +73,24 @@ Rules:
 - Do not render passwords, bearer token values, MeshCore private keys, shared secrets, or full credential material.
 - Board/platform crates own display controller setup, fonts, framebuffers, and refresh timing.
 
+### `crates/muninn-gate-board-bifrost-pros3`
+
+Bifrost Gate variant — Unexpected Maker ProS3 / ProS3[D] + Adafruit SSD1327
+128×128 grayscale I2C OLED + future EBYTE E22P-915M30S LoRa.
+
+Owns:
+
+- `BifrostProS3Gate` implementation of `GateFirmwareVariant`
+- capability declaration for WiFi, HTTP, USB serial, and the
+  `Oled128x128Grayscale` display variant
+- `BifrostProS3Gate::run()` entry point that dispatches to
+  `muninn_gate_platform_esp32::run_bifrost_pros3::<Self>()`
+- TX power mapping placeholder (passthrough until the radio path is wired)
+
+Rules: identical to the Heltec V4 crate — board-specific policy lives
+here, not in `muninn-gate-firmware`; radio register mechanics stay in the
+driver crates.
+
 ### `crates/muninn-gate-board-heltec-v4`
 
 Concrete WiFi LoRa 32 V4.x, ESP32S3 + SX1262 LoRa Node board variant.
@@ -104,6 +122,13 @@ Reusable ESP32-S3 platform crate.
 Owns:
 
 - `esp-hal` platform initialization
+- `bifrost_pros3` submodule — isolated bring-up runner for the
+  Bifrost Gate ProS3 variant (antenna switch, LDO2 rail, shared STEMMA I2C
+  bus, MAX17048 fuel gauge, SSD1327 grayscale OLED with Gray4 UI,
+  WS2812 RGB status LED, esp-wifi STA scan-only). Composed via a
+  `BoardServices` facade so the runner consumes a single mutable handle
+  instead of five `Option<_>` slots. Does **not** go through
+  `run_gateway` and shares no resources with the Heltec path.
 - ESP32-S3 clock, heap, diagnostics, and platform service hooks
 - ESP32-S3 task placement policy, with LoRa/MeshCore reserved on APP CPU
 - ESP WiFi driver initialization on the PRO CPU before the APP CPU radio owner starts
@@ -216,6 +241,11 @@ Expected direction:
 muninn-gate-firmware
   -> muninn-gate-core
   -> muninn-gate-board-heltec-v4
+  -> muninn-gate-board-bifrost-pros3
+
+muninn-gate-board-bifrost-pros3
+  -> muninn-gate-core
+  -> muninn-gate-platform-esp32
 
 muninn-gate-board-heltec-v4
   -> muninn-gate-core
@@ -246,7 +276,11 @@ Each arrow is a direct dependency from the crate above it. Avoid reverse depende
 - Upload-ready provisioning config: `config.example.json`
 - Commented provisioning reference: `config.example.jsonc`
 - Provisioning utility: `tools/cli.py`
-- Board variant: `crates/muninn-gate-board-heltec-v4/src/lib.rs`
+- Serial monitor: `tools/monitor.py`
+- Board variant (Heltec V4): `crates/muninn-gate-board-heltec-v4/src/lib.rs`
+- Board variant (Bifrost ProS3): `crates/muninn-gate-board-bifrost-pros3/src/lib.rs`
+- Bifrost ProS3 runner: `crates/muninn-gate-platform-esp32/src/bifrost_pros3.rs`
+- Bifrost ProS3 board doc: `docs/boards/bifrost_pros3.md`
 - WiFi LoRa 32 V4.x TX power level mapping: `crates/muninn-gate-board-heltec-v4/src/tx_power.rs`
 - ESP32 platform runner: `crates/muninn-gate-platform-esp32/src/lib.rs`
 - Core traits: `crates/muninn-gate-core/src/lib.rs`

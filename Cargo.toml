@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/muninn-gate-board-bifrost-pros3",
     "crates/muninn-gate-board-heltec-v4",
     "crates/muninn-gate-core",
     "crates/muninn-gate-firmware",
@@ -41,7 +42,9 @@ sha2 = { version = "0.11.0", default-features = false }
 smoltcp = { version = "0.12.0", default-features = false }
 ssd1306 = "0.10.0"
 static_cell = "2.1.1"
+u8g2-fonts = "0.8.0"
 
+muninn-gate-board-bifrost-pros3 = { path = "crates/muninn-gate-board-bifrost-pros3" }
 muninn-gate-board-heltec-v4 = { path = "crates/muninn-gate-board-heltec-v4" }
 muninn-gate-core = { path = "crates/muninn-gate-core" }
 muninn-gate-platform-esp32 = { path = "crates/muninn-gate-platform-esp32" }
