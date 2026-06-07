@@ -1,0 +1,10 @@
+[package]
+name = "muninn-driver-max17048"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+embedded-hal.workspace = true

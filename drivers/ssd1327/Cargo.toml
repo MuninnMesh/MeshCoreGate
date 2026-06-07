@@ -1,0 +1,11 @@
+[package]
+name = "muninn-driver-ssd1327"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+embedded-graphics.workspace = true
+embedded-hal.workspace = true

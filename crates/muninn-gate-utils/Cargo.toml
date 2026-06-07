@@ -1,0 +1,17 @@
+[package]
+name = "muninn-gate-utils"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = []
+esp32s3 = ["esp-hal/esp32s3"]
+
+[dependencies]
+embedded-hal-bus.workspace = true
+esp-alloc.workspace = true
+esp-hal = { workspace = true, features = ["unstable"] }
+static_cell.workspace = true

@@ -1,0 +1,14 @@
+[package]
+name = "muninn-driver-ws2812"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = []
+esp32s3 = ["esp-hal/esp32s3"]
+
+[dependencies]
+esp-hal = { workspace = true, features = ["unstable"] }

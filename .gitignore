@@ -20,6 +20,9 @@ dist/
 build/
 *.egg-info/
 
+# Runtime logs and captures
+/logs/
+
 # Temporary local planning files
 /TODO*.md
 /TASK.md
