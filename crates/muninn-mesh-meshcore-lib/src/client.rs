@@ -25,6 +25,8 @@ use crate::{
 
 /// MeshCore telemetry request command byte.
 pub const MESHCORE_REQ_TYPE_GET_TELEMETRY_DATA: u8 = 0x03;
+/// MeshCore status (repeater stats) request command byte.
+pub const MESHCORE_REQ_TYPE_GET_STATUS: u8 = 0x01;
 /// MeshCore successful anonymous-login response marker.
 pub const MESHCORE_RESP_SERVER_LOGIN_OK: u8 = 0x00;
 /// Maximum password bytes accepted by official MeshCore login packets.
@@ -435,6 +437,31 @@ pub fn build_telemetry_request(
     build_wire_frame(MESH_KIND_REQUEST, contact.route, body.as_slice())
 }
 
+/// Build a MeshCore status (repeater stats) request. Same framing as a
+/// telemetry request but the only payload byte is the GET_STATUS command; the
+/// repeater reflects the tag and returns its packed `RepeaterStats` blob. Uses
+/// the contact's route (always Direct here), so the exchange stays direct-only.
+pub fn build_status_request(
+    identity: &MeshcoreIdentity,
+    contact: &MeshcoreContact,
+    tag: u32,
+) -> Result<MeshTxFrame, MeshcoreClientPacketError>
+{
+    let secret = identity.shared_secret(&contact.public_key)?;
+    // [tag:4][command:1]
+    let mut plain = [0u8; MESHCORE_TAG_BYTES + 1];
+    plain[..MESHCORE_TAG_BYTES].copy_from_slice(&tag.to_le_bytes());
+    plain[REQUEST_COMMAND_OFFSET] = MESHCORE_REQ_TYPE_GET_STATUS;
+
+    let mut body = Vec::<u8, MESH_PAYLOAD_MAX>::new();
+    body.extend_from_slice(contact.hash()?.as_slice())
+        .map_err(|_| MeshcoreClientPacketError::PayloadTooLarge)?;
+    body.extend_from_slice(identity.hash(contact.route)?.as_slice())
+        .map_err(|_| MeshcoreClientPacketError::PayloadTooLarge)?;
+    encrypt_then_mac(&secret, &plain, &mut body)?;
+    build_wire_frame(MESH_KIND_REQUEST, contact.route, body.as_slice())
+}
+
 /// Build a signed MeshCore startup advert for the gateway identity.
 pub fn build_gateway_advert(
     identity: &MeshcoreIdentity,
@@ -726,14 +753,15 @@ fn push_advert_name(
 ) -> Result<(), MeshcoreClientPacketError>
 {
     let reserve = 1;
-    for ch in name.chars() {
-        let mut utf8 = [0u8; 4];
-        let bytes = ch.encode_utf8(&mut utf8).as_bytes();
-        if appdata.len() + bytes.len() + reserve > appdata.capacity() {
+    for byte in name.bytes() {
+        if !(32..=126).contains(&byte) || byte == b',' {
+            continue;
+        }
+        if appdata.len() + 1 + reserve > appdata.capacity() {
             break;
         }
         appdata
-            .extend_from_slice(bytes)
+            .push(byte)
             .map_err(|_| MeshcoreClientPacketError::PayloadTooLarge)?;
     }
     appdata

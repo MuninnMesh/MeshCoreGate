@@ -5,11 +5,17 @@ members = [
     "crates/muninn-gate-board-heltec-v4",
     "crates/muninn-gate-core",
     "crates/muninn-gate-firmware",
+    "crates/muninn-gate-time",
     "crates/muninn-gate-ui",
+    "crates/muninn-gate-utils",
     "crates/muninn-gate-platform-esp32",
     "crates/muninn-mesh-meshcore-lib",
     "crates/muninn-mesh-radio",
     "crates/muninn-mesh-sx126x",
+    "drivers/max17048",
+    "drivers/ds3231",
+    "drivers/ssd1327",
+    "drivers/ws2812",
 ]
 
 [workspace.dependencies]
@@ -28,8 +34,10 @@ esp-alloc = "0.8.0"
 esp-backtrace = "0.18.1"
 esp-hal = "=1.0.0-rc.0"
 esp-hal-embassy = "0.9.1"
+esp-hal-ota = { version = "0.5.0", default-features = false }
 esp-println = { version = "0.16.1", default-features = false }
 esp-rom-sys = "0.1.4"
+esp-storage = "0.7.0"
 esp-wifi = { version = "0.15.1", default-features = false }
 esp-wifi-sys = "0.7.1"
 heapless = "0.8.0"
@@ -48,10 +56,17 @@ muninn-gate-board-bifrost-pros3 = { path = "crates/muninn-gate-board-bifrost-pro
 muninn-gate-board-heltec-v4 = { path = "crates/muninn-gate-board-heltec-v4" }
 muninn-gate-core = { path = "crates/muninn-gate-core" }
 muninn-gate-platform-esp32 = { path = "crates/muninn-gate-platform-esp32" }
+muninn-gate-time = { path = "crates/muninn-gate-time" }
 muninn-gate-ui = { path = "crates/muninn-gate-ui" }
+muninn-gate-utils = { path = "crates/muninn-gate-utils" }
 muninn-mesh-meshcore-lib = { path = "crates/muninn-mesh-meshcore-lib" }
 muninn-mesh-radio = { path = "crates/muninn-mesh-radio" }
 muninn-mesh-sx126x = { path = "crates/muninn-mesh-sx126x" }
+
+muninn-driver-max17048 = { path = "drivers/max17048" }
+muninn-driver-ds3231 = { path = "drivers/ds3231" }
+muninn-driver-ssd1327 = { path = "drivers/ssd1327" }
+muninn-driver-ws2812 = { path = "drivers/ws2812" }
 
 [profile.dev]
 opt-level = "s"

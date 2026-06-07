@@ -50,6 +50,12 @@ reconnect attempts are paced. DHCP is reset on link recovery and IP state
 changes so smoltcp does not remain in an old discovery backoff. Details and the
 operational checklist live in [10_RELIABILITY.md](10_RELIABILITY.md).
 
+The DHCP client sends option 12 Host Name using a sanitized form of
+`config.name` so consumer router apps can display the gateway by name. The
+sanitizer keeps ASCII letters/digits, converts spaces/underscores/hyphens into
+single hyphens, drops other characters, trims edge hyphens, and falls back to
+`muninn-gate` when the configured name has no usable hostname characters.
+
 WiFi state management belongs in the ESP32 platform crate. `muninn-gate-core` should not depend on the WiFi stack or know whether the board uses WiFi, USB, Ethernet, or serial-only output.
 
 ## HTTP `/metrics`

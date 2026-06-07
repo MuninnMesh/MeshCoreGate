@@ -24,6 +24,7 @@ use muninn_gate_core::{
     TelemetryProducerConfig,
     TelemetryProducerKind,
     TelemetryRoute,
+    TimeSettings,
 };
 use serde::Deserialize;
 
@@ -193,6 +194,7 @@ struct WireGatewayConfig
     display:   Option<WireDisplayConfig>,
     polling:   Option<WirePollingConfig>,
     radio:     Option<WireRadioConfig>,
+    time:      Option<WireTimeConfig>,
     meshcore:  WireMeshcoreConfig,
     producers: Option<AllocVec<WireProducerConfig>>,
 }
@@ -224,6 +226,12 @@ impl WireGatewayConfig
             .radio
             .as_ref()
             .map(WireRadioConfig::to_config)
+            .unwrap_or_default();
+        config.time = self
+            .time
+            .as_ref()
+            .map(WireTimeConfig::to_config)
+            .transpose()?
             .unwrap_or_default();
         config.meshcore = self.meshcore.to_config()?;
 
@@ -380,6 +388,28 @@ impl WireRadioConfig
 }
 
 #[derive(Debug, Deserialize)]
+struct WireTimeConfig
+{
+    utc_offset_minutes: Option<i16>,
+    unix_time_seconds:  Option<u64>,
+}
+
+impl WireTimeConfig
+{
+    fn to_config(&self) -> Result<TimeSettings, ProvisioningError>
+    {
+        let settings = TimeSettings {
+            utc_offset_minutes: self.utc_offset_minutes.unwrap_or_default(),
+            unix_time_seconds:  self.unix_time_seconds,
+        };
+        if !settings.is_valid() {
+            return Err(ProvisioningError::InvalidConfig);
+        }
+        Ok(settings)
+    }
+}
+
+#[derive(Debug, Deserialize)]
 struct WireMeshcoreConfig
 {
     public_key:  AllocString,
@@ -489,6 +519,7 @@ fn parse_display_value(value: &str) -> Result<DisplayTelemetryValue, Provisionin
         "soc" => Ok(DisplayTelemetryValue::StateOfCharge),
         "battery_voltage" => Ok(DisplayTelemetryValue::BatteryVoltage),
         "pressure" => Ok(DisplayTelemetryValue::PressureHpa),
+        "luminosity" => Ok(DisplayTelemetryValue::LuminosityLux),
         "rssi" => Ok(DisplayTelemetryValue::Rssi),
         "latency" => Ok(DisplayTelemetryValue::PollLatency),
         _ => Err(ProvisioningError::InvalidConfig),
@@ -568,5 +599,25 @@ mod tests
         );
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn parses_time_settings()
+    {
+        let command = parse_usb_document(
+            r#"{"name":"gate",
+              "time":{"utc_offset_minutes":-360,"unix_time_seconds":1704067200},
+              "meshcore":{"public_key":"gateway-public-key"}
+            }"#,
+        )
+        .unwrap();
+
+        match command {
+            ProvisioningCommand::SetConfig(config) => {
+                assert_eq!(config.time.utc_offset_minutes, -360);
+                assert_eq!(config.time.unix_time_seconds, Some(1_704_067_200));
+            },
+            _ => panic!("unexpected command"),
+        }
     }
 }

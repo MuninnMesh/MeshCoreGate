@@ -894,6 +894,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "esp-hal-ota"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79c3b3f18d6dd148df3152ef16df4825e37622cf4fcd2d2c04b21b70c312d46c"
+dependencies = [
+ "embedded-storage",
+ "esp32s3 0.35.2",
+]
+
+[[package]]
 name = "esp-hal-procmacros"
 version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -979,6 +989,18 @@ dependencies = [
  "document-features",
  "esp-metadata-generated 0.4.0",
  "esp32s3 0.35.2",
+]
+
+[[package]]
+name = "esp-storage"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f276ad8a3bdc6b47cd92a3e91013f2e42dce9b3fc5023392063387a1ce2ed69a"
+dependencies = [
+ "critical-section",
+ "document-features",
+ "embedded-storage",
+ "esp-rom-sys",
 ]
 
 [[package]]
@@ -1388,11 +1410,62 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3c8dda44ff03a2f238717214da50f65d5a53b45cd213a7370424ffdb6fae815"
 
 [[package]]
+name = "muninn-driver-ds3231"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal 1.0.0",
+]
+
+[[package]]
+name = "muninn-driver-max17048"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal 1.0.0",
+]
+
+[[package]]
+name = "muninn-driver-ssd1327"
+version = "0.1.0"
+dependencies = [
+ "embedded-graphics",
+ "embedded-hal 1.0.0",
+]
+
+[[package]]
+name = "muninn-driver-ws2812"
+version = "0.1.0"
+dependencies = [
+ "esp-hal",
+]
+
+[[package]]
 name = "muninn-gate-board-bifrost-pros3"
 version = "0.1.0"
 dependencies = [
+ "critical-section",
+ "embassy-futures",
+ "embedded-graphics",
+ "embedded-hal 1.0.0",
+ "embedded-hal-bus",
+ "esp-alloc",
+ "esp-hal",
+ "esp-println",
+ "esp-wifi",
+ "esp-wifi-sys",
+ "heapless 0.8.0",
+ "muninn-driver-ds3231",
+ "muninn-driver-max17048",
+ "muninn-driver-ssd1327",
+ "muninn-driver-ws2812",
  "muninn-gate-core",
  "muninn-gate-platform-esp32",
+ "muninn-gate-time",
+ "muninn-gate-utils",
+ "muninn-mesh-radio",
+ "muninn-mesh-sx126x",
+ "smoltcp",
+ "static_cell",
+ "u8g2-fonts",
 ]
 
 [[package]]
@@ -1411,6 +1484,7 @@ dependencies = [
  "defmt",
  "heapless 0.8.0",
  "log",
+ "muninn-gate-time",
  "serde",
 ]
 
@@ -1439,8 +1513,10 @@ dependencies = [
  "esp-alloc",
  "esp-hal",
  "esp-hal-embassy",
+ "esp-hal-ota",
  "esp-println",
  "esp-rom-sys",
+ "esp-storage",
  "esp-wifi",
  "esp-wifi-sys",
  "heapless 0.8.0",
@@ -1459,12 +1535,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "muninn-gate-time"
+version = "0.1.0"
+
+[[package]]
 name = "muninn-gate-ui"
 version = "0.1.0"
 dependencies = [
  "embedded-graphics",
  "heapless 0.8.0",
  "muninn-gate-core",
+]
+
+[[package]]
+name = "muninn-gate-utils"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal-bus",
+ "esp-alloc",
+ "esp-hal",
+ "static_cell",
 ]
 
 [[package]]

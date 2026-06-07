@@ -68,11 +68,14 @@ DISPLAY_VALUES = {
     "soc",
     "battery_voltage",
     "pressure",
+    "luminosity",
     "rssi",
     "latency",
 }
 RADIO_BANDWIDTH_HZ = {7810, 10420, 15630, 20830, 31250, 41670, 62500, 125000, 250000, 500000}
 RADIO_RAMP_US = {10, 20, 40, 80, 200, 800, 1700, 3400}
+MIN_UTC_OFFSET_MINUTES = -12 * 60
+MAX_UTC_OFFSET_MINUTES = 14 * 60
 
 
 def main() -> int:
@@ -116,6 +119,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--token", action="append", help="HTTP bearer token")
     parser.add_argument("--no-token", action="store_true", help="set http.tokens to []")
+    parser.add_argument(
+        "--utc-offset-minutes",
+        type=int,
+        help="local display offset from UTC; e.g. CST is -360",
+    )
+    parser.add_argument(
+        "--no-time-sync",
+        action="store_true",
+        help="do not inject current host Unix time into config.time",
+    )
     parser.add_argument("--output", "-o", help="write final JSON to this path")
     return parser
 
@@ -154,10 +167,17 @@ def upload_config(port: str, data: bytes) -> None:
     """Upload config bytes to the firmware provisioning serial port."""
     fd = None
     try:
-        if trigger_reset(port):
-            print("Reset sent; waiting for provisioning window.", file=sys.stderr)
-        else:
-            print("Automatic reset failed; press RESET when prompted.", file=sys.stderr)
+        # No automatic reset: ESP32-S3 native USB-Serial/JTAG (the Bifrost
+        # ProS3 path) interprets `espflash reset` as "host wants to flash"
+        # and drops the chip into the ROM bootloader, never reaching our
+        # firmware. Both supported firmwares emit the ready marker
+        # continuously while unprovisioned, so we just open the port and
+        # wait — press RESET manually only if the marker never appears.
+        print(
+            f"Waiting for provisioning window on {port}. "
+            "Press RESET if it does not appear.",
+            file=sys.stderr,
+        )
         fd, _active_port = wait_for_ready(port)
         print(f"Uploading config ({len(data)} bytes).", file=sys.stderr)
         for offset in range(0, len(data), CHUNK_SIZE):
@@ -200,6 +220,10 @@ def apply_overrides(config: dict[str, Any], args: argparse.Namespace) -> None:
         http_section(config)["tokens"] = args.token
     if args.no_token:
         http_section(config)["tokens"] = []
+    if args.utc_offset_minutes is not None:
+        time_section(config)["utc_offset_minutes"] = args.utc_offset_minutes
+    if not args.no_time_sync:
+        time_section(config)["unix_time_seconds"] = int(time.time())
     if args.keys:
         public_key, private_key = generate_meshcore_keys()
         meshcore = config.get("meshcore")
@@ -240,6 +264,15 @@ def http_section(config: dict[str, Any]) -> dict[str, Any]:
     return http
 
 
+def time_section(config: dict[str, Any]) -> dict[str, Any]:
+    """Return the time section, creating one when overrides need it."""
+    section = config.get("time")
+    if not isinstance(section, dict):
+        section = {}
+        config["time"] = section
+    return section
+
+
 def validate_config(config: dict[str, Any]) -> None:
     """Reject config that cannot pass firmware validation."""
     expect_text(config, "name", min_len=1, max_len=32)
@@ -247,6 +280,7 @@ def validate_config(config: dict[str, Any]) -> None:
     validate_display(config.get("display"))
     validate_polling(config.get("polling"))
     validate_radio(config.get("radio"))
+    validate_time(config.get("time"))
     validate_meshcore(config.get("meshcore"))
     validate_producers(config.get("producers"))
 
@@ -323,6 +357,28 @@ def validate_radio(radio: Any) -> None:
         fail("radio.tx_ramp_time_us is unsupported")
     if not isinstance(radio.get("iq_inverted", False), bool):
         fail("radio.iq_inverted must be true or false")
+
+
+def validate_time(time_config: Any) -> None:
+    """Validate optional wall-clock display configuration."""
+    if time_config is None:
+        return
+    if not isinstance(time_config, dict):
+        fail("time must be an object or null")
+    offset = time_config.get("utc_offset_minutes", 0)
+    if (
+        not isinstance(offset, int)
+        or not MIN_UTC_OFFSET_MINUTES <= offset <= MAX_UTC_OFFSET_MINUTES
+    ):
+        fail(
+            "time.utc_offset_minutes must be "
+            f"{MIN_UTC_OFFSET_MINUTES}..{MAX_UTC_OFFSET_MINUTES}"
+        )
+    unix_time = time_config.get("unix_time_seconds")
+    if unix_time is not None and (
+        not isinstance(unix_time, int) or unix_time < 0
+    ):
+        fail("time.unix_time_seconds must be a non-negative integer")
 
 
 def validate_meshcore(meshcore: Any) -> None:

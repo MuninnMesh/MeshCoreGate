@@ -2,18 +2,18 @@
 //!
 //! Visual treatment:
 //!
-//! - Background filled in `LUMA_ACCENT` with rounded top corners — reads as
-//!   a bright "title bar" docked to the top edge of the panel.
-//! - All foreground chrome (title text, battery icon, WiFi bars) drawn in
-//!   `LUMA_BG` so it pops against the bright background.
-//! - Charging indicator: when USB 5 V is detected, a small lightning bolt
-//!   replaces the SOC fill inside the battery icon.
+//! - Background filled in `LUMA_ACCENT` with rounded top corners — reads as a bright "title bar"
+//!   docked to the top edge of the panel.
+//! - All foreground chrome (title text, battery icon, WiFi bars) drawn in `LUMA_BG` so it pops
+//!   against the bright background.
+//! - Charging indicator: when USB 5 V is detected with a battery present, a small plug glyph sits
+//!   next to the battery icon.
 //!
 //! Layout (128 px wide, 13 px tall):
 //!
 //! ```text
 //!  ┌─────────────────────────┬─────┬──────┬───────┐
-//!  │ Bifrost Gate            │ ▓⚡  │  78  │ ▁▃▅▇  │
+//!  │ Bifrost Gate            │ ▓⌁  │  78  │ ▁▃▅▇  │
 //!  └─────────────────────────┴─────┴──────┴───────┘
 //!   0                      62 87 93        111   128
 //! ```
@@ -30,18 +30,10 @@ use embedded_graphics::primitives::{
     StyledDrawable,
 };
 use heapless::String;
+use muninn_driver_max17048::BatterySample;
 use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 
-use super::{
-    FONT_CHROME,
-    FONT_TINY,
-    LUMA_ACCENT,
-    LUMA_BG,
-    LUMA_DIM,
-    NetworkPhase,
-    UiState,
-};
-use crate::bifrost_pros3::battery::BatterySample;
+use super::{FONT_CHROME, FONT_TINY, LUMA_ACCENT, LUMA_BG, LUMA_DIM, NetworkPhase, UiState};
 
 /// Header height (background block height).
 pub const HEADER_HEIGHT: u32 = 13;
@@ -54,6 +46,12 @@ const HEADER_CORNER_RADIUS: u32 = 2;
 /// user-set `config.name` fits comfortably without bumping into the
 /// battery icon at x=88.
 const TITLE_MAX_CHARS: usize = 13;
+/// Maximum title length when the 4-char gateway public-key prefix is present.
+const TITLE_MAX_CHARS_WITH_PREFIX: usize = 9;
+/// Approximate ProFont11 character advance in pixels.
+const TITLE_CHAR_WIDTH: i32 = 6;
+/// Space between the gateway key prefix and configured name.
+const TITLE_PREFIX_GAP_PX: i32 = 6;
 const BATTERY_ICON_X: i32 = 88;
 const BATTERY_ICON_Y: i32 = 2;
 const BATTERY_ICON_WIDTH: i32 = 4;
@@ -62,6 +60,27 @@ const BATTERY_ICON_TIP_HEIGHT: i32 = 1;
 /// Right edge of the percent text. Text grows leftward from here.
 const BATTERY_PERCENT_RIGHT_X: i32 = 109;
 const BATTERY_PERCENT_Y: i32 = 2;
+/// Top-left of the horizontal plug glyph. Sits right next to the WiFi
+/// bars (which start at `WIFI_BARS_X = 114`) — the percent text is
+/// suppressed in the no-battery state so we close the gap to make the
+/// indicator obvious. Vertical offset puts the 5-px glyph in the optical
+/// middle of the 13-px header.
+const PLUG_ICON_X: i32 = 100;
+const PLUG_ICON_Y: i32 = 4;
+/// Top-left of the compact charging plug glyph drawn when USB is
+/// delivering power AND a battery sample is present below the full-charge
+/// threshold. Sits between the battery icon (ends at x=92) and the
+/// percent text (right-aligned at x=109).
+const CHARGE_PLUG_ICON_X: i32 = 94;
+const CHARGE_PLUG_ICON_Y: i32 = 3;
+/// SoC threshold (percent) above which we assume "no battery, just USB"
+/// rather than "battery fully charged + USB". The MAX17048 reads VBAT
+/// = ~4.2 V whenever the charger is driving the rail, regardless of
+/// whether a battery is actually attached, so we can't distinguish the
+/// two cases without an extra sense pin. Treat ≥ 99 % SoC under USB as
+/// "USB only" — minor wart: a truly-full charging battery briefly
+/// shows the plug instead of the battery icon, which is acceptable.
+const PLUG_USB_ONLY_SOC_THRESHOLD: u8 = 99;
 /// WiFi bar group left edge. The per-AP signal bars in the network list
 /// share this anchor so all WiFi indicators align vertically.
 pub const WIFI_BARS_X: i32 = 114;
@@ -82,7 +101,7 @@ where
     D: DrawTarget<Color = Gray4, Error = E>,
 {
     draw_background(target)?;
-    draw_title(target, state.title.as_str())?;
+    draw_title(target, state)?;
     draw_battery(target, state.battery, state.usb_connected)?;
     draw_wifi_bars(target, &state.network, state.now_ms)?;
     Ok(())
@@ -110,14 +129,39 @@ where
     Ok(())
 }
 
-fn draw_title<D, E>(target: &mut D, title: &str) -> Result<(), E>
+fn draw_title<D, E>(target: &mut D, state: &UiState) -> Result<(), E>
 where
     D: DrawTarget<Color = Gray4, Error = E>,
 {
-    let truncated = truncate(title, TITLE_MAX_CHARS);
+    let origin = Point::new(2, 2);
+    let prefix = state.gateway_pubkey_prefix.as_str();
+    if !prefix.is_empty() {
+        let _ = FONT_CHROME.render_aligned(
+            prefix,
+            origin,
+            VerticalPosition::Top,
+            HorizontalAlignment::Left,
+            FontColor::Transparent(LUMA_BG),
+            target,
+        );
+
+        let title = truncate_plain(state.title.as_str(), TITLE_MAX_CHARS_WITH_PREFIX);
+        let title_x = origin.x + (prefix.len() as i32 * TITLE_CHAR_WIDTH) + TITLE_PREFIX_GAP_PX;
+        let _ = FONT_CHROME.render_aligned(
+            title.as_str(),
+            Point::new(title_x, origin.y),
+            VerticalPosition::Top,
+            HorizontalAlignment::Left,
+            FontColor::Transparent(LUMA_BG),
+            target,
+        );
+        return Ok(());
+    }
+
+    let truncated = truncate(state.title.as_str(), TITLE_MAX_CHARS);
     let _ = FONT_CHROME.render_aligned(
         truncated.as_str(),
-        Point::new(2, 2),
+        origin,
         VerticalPosition::Top,
         HorizontalAlignment::Left,
         FontColor::Transparent(LUMA_BG),
@@ -134,16 +178,35 @@ fn draw_battery<D, E>(
 where
     D: DrawTarget<Color = Gray4, Error = E>,
 {
+    // Three-state decision matrix:
+    //
+    // - No fuel-gauge reading → almost certainly no battery → plug.
+    // - USB on AND SoC ≥ 99 % → assume "USB-only" (charger pegs VBAT at ~4.2 V whether or not a
+    //   cell is attached) → plug.
+    // - USB on AND SoC < 99 % → battery is present and charging → battery icon + plug marker.
+    // - USB off → on-battery → battery icon, no bolt.
+    let charging = match sample {
+        None => return draw_plug_icon(target, Point::new(PLUG_ICON_X, PLUG_ICON_Y)),
+        Some(s) if usb_connected && s.soc_percent >= PLUG_USB_ONLY_SOC_THRESHOLD => {
+            return draw_plug_icon(target, Point::new(PLUG_ICON_X, PLUG_ICON_Y));
+        },
+        Some(_) => usb_connected,
+    };
+    let s = sample.expect("returned plug earlier when sample is None");
+
     let icon_x = BATTERY_ICON_X;
     let icon_y = BATTERY_ICON_Y;
 
     // Tip: 2 px wide, centered on the body.
     let tip_x = icon_x + (BATTERY_ICON_WIDTH - 2) / 2;
-    Rectangle::new(Point::new(tip_x, icon_y), Size::new(2, BATTERY_ICON_TIP_HEIGHT as u32))
-        .draw_styled(
-            &PrimitiveStyleBuilder::new().fill_color(LUMA_BG).build(),
-            target,
-        )?;
+    Rectangle::new(
+        Point::new(tip_x, icon_y),
+        Size::new(2, BATTERY_ICON_TIP_HEIGHT as u32),
+    )
+    .draw_styled(
+        &PrimitiveStyleBuilder::new().fill_color(LUMA_BG).build(),
+        target,
+    )?;
 
     // Body outline with rounded bottom corners (matches the chrome).
     RoundedRectangle::new(
@@ -167,50 +230,22 @@ where
         target,
     )?;
 
-    if usb_connected {
-        // Charging: invert the body (dark fill instead of bright) and draw
-        // a small lightning bolt in `LUMA_ACCENT` on top. At the 4×7 icon
-        // scale a bolt-on-bright is easy to confuse with a full SOC bar,
-        // so the inversion is doing the heavy lifting — the bolt is the
-        // semantic cue, the dark body is the alarm signal.
-        let interior_x = icon_x + 1;
-        let interior_y = icon_y + BATTERY_ICON_TIP_HEIGHT + 1;
-        let interior_w = (BATTERY_ICON_WIDTH - 2) as u32;
-        let interior_h = (BATTERY_ICON_BODY_HEIGHT - 2) as u32;
-        Rectangle::new(
-            Point::new(interior_x, interior_y),
-            Size::new(interior_w, interior_h),
-        )
-        .draw_styled(
+    // Standard SOC fill, grows upward from the bottom of the body.
+    let inner_h = (BATTERY_ICON_BODY_HEIGHT - 2) as u32;
+    let fill_h = (inner_h * s.soc_percent.min(100) as u32) / 100;
+    if fill_h > 0 {
+        let fill_y = icon_y + BATTERY_ICON_TIP_HEIGHT + 1 + (inner_h as i32 - fill_h as i32);
+        let inner_w = BATTERY_ICON_WIDTH as u32 - 2;
+        Rectangle::new(Point::new(icon_x + 1, fill_y), Size::new(inner_w, fill_h)).draw_styled(
             &PrimitiveStyleBuilder::new().fill_color(LUMA_BG).build(),
             target,
         )?;
-        draw_lightning_bolt(target, Point::new(interior_x, interior_y))?;
-    } else if let Some(s) = sample {
-        // Idle: standard SOC fill, grows upward from the bottom of the body.
-        let inner_h = (BATTERY_ICON_BODY_HEIGHT - 2) as u32;
-        let fill_h = (inner_h * s.soc_percent.min(100) as u32) / 100;
-        if fill_h > 0 {
-            let fill_y = icon_y
-                + BATTERY_ICON_TIP_HEIGHT
-                + 1
-                + (inner_h as i32 - fill_h as i32);
-            let inner_w = BATTERY_ICON_WIDTH as u32 - 2;
-            Rectangle::new(Point::new(icon_x + 1, fill_y), Size::new(inner_w, fill_h))
-                .draw_styled(
-                    &PrimitiveStyleBuilder::new().fill_color(LUMA_BG).build(),
-                    target,
-                )?;
-        }
     }
 
     // Tiny percent label, right-aligned so it can never bleed into the WiFi
     // bars regardless of the digit count.
     let mut buf: String<5> = String::new();
-    let _ = match sample {
-        Some(s) => core::fmt::write(&mut buf, format_args!("{}", s.soc_percent)),
-        None => core::fmt::write(&mut buf, format_args!("--")),
-    };
+    let _ = core::fmt::write(&mut buf, format_args!("{}", s.soc_percent));
     let _ = FONT_TINY.render_aligned(
         buf.as_str(),
         Point::new(BATTERY_PERCENT_RIGHT_X, BATTERY_PERCENT_Y),
@@ -219,38 +254,120 @@ where
         FontColor::Transparent(LUMA_BG),
         target,
     );
+
+    // Tiny plug between battery icon and percent text when USB is
+    // delivering power. Lets the operator see "battery + external power"
+    // vs. "battery only" at a glance without parsing the SOC number.
+    if charging {
+        draw_charging_plug(target, Point::new(CHARGE_PLUG_ICON_X, CHARGE_PLUG_ICON_Y))?;
+    }
     Ok(())
 }
 
-/// Lightning-bolt glyph for the battery's interior charging indicator.
-///
-/// Designed to read at 2×5 — the full usable interior of the battery
-/// icon, minus the 1 px outline. Bright `LUMA_ACCENT` pixels on a
-/// dark-inverted body:
+/// Tiny plug glyph (5 × 7 px) used when USB is supplying power and the
+/// battery isn't already full.
+/// Drawn in `LUMA_BG` (dark) against the bright `LUMA_ACCENT` header
+/// background.
 ///
 /// ```text
-/// .#
-/// #.
-/// ##
-/// .#
-/// #.
+/// ##...
+/// ##...
+/// ####.
+/// #..##
+/// ####.
+/// ##...
+/// ##...
 /// ```
-fn draw_lightning_bolt<D, E>(target: &mut D, top_left: Point) -> Result<(), E>
+fn draw_charging_plug<D, E>(target: &mut D, top_left: Point) -> Result<(), E>
 where
     D: DrawTarget<Color = Gray4, Error = E>,
 {
     const PIXELS: &[(i32, i32)] = &[
+        // Twin prongs.
+        (0, 0),
         (1, 0),
         (0, 1),
+        (1, 1),
+        (0, 5),
+        (1, 5),
+        (0, 6),
+        (1, 6),
+        // Plug body.
         (0, 2),
         (1, 2),
-        (1, 3),
+        (2, 2),
+        (3, 2),
+        (0, 3),
+        (3, 3),
+        (4, 3),
         (0, 4),
+        (1, 4),
+        (2, 4),
+        (3, 4),
     ];
     target.draw_iter(
         PIXELS
             .iter()
-            .map(|(dx, dy)| Pixel(Point::new(top_left.x + dx, top_left.y + dy), LUMA_ACCENT)),
+            .map(|(dx, dy)| Pixel(Point::new(top_left.x + dx, top_left.y + dy), LUMA_BG)),
+    )
+}
+
+/// Wall-plug glyph used when no battery is detected. 10 × 5 px, drawn in
+/// `LUMA_BG` against the bright `LUMA_ACCENT` header background.
+///
+/// Reads as "AC plug seen from the side" — two prongs sticking out the
+/// left, a hollow plug head in the middle, and a short cord trailing off
+/// to the right. The horizontal orientation matches the header's
+/// landscape strip and tucks neatly between the battery slot (empty in
+/// this state) and the WiFi bars.
+///
+/// ```text
+///     ####.    head top
+/// #####..#.    top prong + neck + head right wall
+/// ....#..###   head sides + cord
+/// #####..#.    bottom prong + neck + head right wall
+///     ####.    head bottom
+/// ```
+fn draw_plug_icon<D, E>(target: &mut D, top_left: Point) -> Result<(), E>
+where
+    D: DrawTarget<Color = Gray4, Error = E>,
+{
+    const PIXELS: &[(i32, i32)] = &[
+        // Top prong + neck + head-left attachment.
+        (0, 1),
+        (1, 1),
+        (2, 1),
+        (3, 1),
+        (4, 1),
+        // Bottom prong + neck + head-left attachment.
+        (0, 3),
+        (1, 3),
+        (2, 3),
+        (3, 3),
+        (4, 3),
+        // Head top/bottom outline (cols 4..=7).
+        (4, 0),
+        (5, 0),
+        (6, 0),
+        (7, 0),
+        (4, 4),
+        (5, 4),
+        (6, 4),
+        (7, 4),
+        // Head left wall middle (rows 1 and 3 are covered by prongs).
+        (4, 2),
+        // Head right wall.
+        (7, 1),
+        (7, 2),
+        (7, 3),
+        // Cord (extends right past the head).
+        (8, 2),
+        (9, 2),
+    ];
+    target.draw_iter(
+        PIXELS
+            .iter()
+            .map(|(dx, dy)| Pixel(Point::new(top_left.x + dx, top_left.y + dy), LUMA_BG)),
     )
 }
 
@@ -270,7 +387,9 @@ where
 
     let style_inactive = PrimitiveStyleBuilder::new().fill_color(LUMA_DIM).build();
     let style_active = PrimitiveStyleBuilder::new().fill_color(LUMA_BG).build();
-    let style_pulse = PrimitiveStyleBuilder::new().fill_color(LUMA_HEADER_PULSE).build();
+    let style_pulse = PrimitiveStyleBuilder::new()
+        .fill_color(LUMA_HEADER_PULSE)
+        .build();
 
     for bar in 0..WIFI_BAR_COUNT {
         let bar_h = 2 + bar * 2;
@@ -319,6 +438,17 @@ fn truncate(input: &str, max_chars: usize) -> heapless::String<32>
             break;
         }
         chars += 1;
+    }
+    out
+}
+
+fn truncate_plain(input: &str, max_chars: usize) -> heapless::String<32>
+{
+    let mut out: heapless::String<32> = heapless::String::new();
+    for ch in input.chars().take(max_chars) {
+        if out.push(ch).is_err() {
+            break;
+        }
     }
     out
 }

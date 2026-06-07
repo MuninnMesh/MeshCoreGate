@@ -139,6 +139,13 @@ impl core::fmt::Debug for IrqStatus
 
 impl IrqStatus
 {
+    /// Raw IRQ-status bits as returned by `GetIrqStatus`. Exposed for
+    /// boards that want to surface the bitmask in diagnostic logs.
+    pub fn raw(self) -> u16
+    {
+        self.inner
+    }
+
     /// Return true when TX completed.
     pub fn tx_done(self) -> bool
     {

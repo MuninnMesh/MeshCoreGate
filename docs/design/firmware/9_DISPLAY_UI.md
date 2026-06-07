@@ -55,7 +55,7 @@ Producer rows use this layout:
 
 The current RSSI indicator thresholds are: `0` at `<= -125 dBm`, `1` at `<= -110 dBm`, `2` at `<= -95 dBm`, and `3` above `-95 dBm`.
 
-The configured display value is `display.node_display`. Supported labels are `temperature`, `humidity`, `soc`, `battery_voltage`, `pressure`, `rssi`, and `latency`. `soc` prefers battery percentage and falls back to voltage. `latency` currently uses the latest gateway poll latency until per-producer latency is tracked. `display.brightness_percent` is a 0-100 request mapped by the platform display driver to the concrete OLED controller.
+The configured display value is `display.node_display`. Supported labels are `temperature`, `humidity`, `soc`, `battery_voltage`, `pressure`, `luminosity`, `rssi`, and `latency`. `soc` prefers battery percentage and falls back to voltage. `latency` currently uses the latest gateway poll latency until per-producer latency is tracked. `display.brightness_percent` is a 0-100 request mapped by the platform display driver to the concrete OLED controller.
 
 For decoded MeshCore/LPP values, the display currently reads
 `ProducerTelemetry.metrics`, the producer-level default metric set. That default

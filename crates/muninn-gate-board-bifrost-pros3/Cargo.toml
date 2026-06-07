@@ -10,5 +10,27 @@ path = "src/lib.rs"
 default = []
 
 [dependencies]
+critical-section.workspace = true
+embassy-futures.workspace = true
+embedded-graphics.workspace = true
+embedded-hal.workspace = true
+embedded-hal-bus.workspace = true
+esp-alloc.workspace = true
+esp-hal = { workspace = true, features = ["esp32s3", "unstable"] }
+esp-println = { workspace = true, features = ["esp32s3", "jtag-serial"] }
+esp-wifi = { workspace = true, default-features = false, features = ["esp32s3", "wifi", "smoltcp", "log-04", "builtin-scheduler", "esp-alloc"] }
+esp-wifi-sys = { workspace = true, features = ["esp32s3"] }
+heapless.workspace = true
+muninn-driver-ds3231.workspace = true
+muninn-driver-max17048.workspace = true
+muninn-driver-ssd1327.workspace = true
+muninn-driver-ws2812 = { workspace = true, features = ["esp32s3"] }
 muninn-gate-core.workspace = true
 muninn-gate-platform-esp32.workspace = true
+muninn-gate-time.workspace = true
+muninn-gate-utils = { workspace = true, features = ["esp32s3"] }
+muninn-mesh-radio.workspace = true
+muninn-mesh-sx126x.workspace = true
+smoltcp = { workspace = true, features = ["medium-ethernet", "proto-ipv4", "socket-dhcpv4", "socket-tcp"] }
+static_cell.workspace = true
+u8g2-fonts.workspace = true

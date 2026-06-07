@@ -1,7 +1,5 @@
 //! WiFi scan / status screens.
 
-use core::fmt::Write as _;
-
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::geometry::{Point, Size};
 use embedded_graphics::pixelcolor::Gray4;
@@ -9,13 +7,12 @@ use embedded_graphics::primitives::{PrimitiveStyleBuilder, Rectangle, StyledDraw
 use heapless::String;
 use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 
-use super::header;
 use super::header::{
-    WIFI_BARS_X,
     WIFI_BAR_COUNT,
     WIFI_BAR_GAP,
     WIFI_BAR_HEIGHT_MAX,
     WIFI_BAR_WIDTH,
+    WIFI_BARS_X,
     rssi_to_bars,
 };
 use super::{
@@ -28,6 +25,7 @@ use super::{
     LUMA_TEXT,
     UiState,
     WifiAp,
+    header,
 };
 
 /// Dedicated WiFi scan screen.
@@ -35,11 +33,10 @@ pub fn draw_scan<D, E>(target: &mut D, state: &UiState) -> Result<(), E>
 where
     D: DrawTarget<Color = Gray4, Error = E>,
 {
-    Rectangle::new(Point::new(0, 0), Size::new(128, 128))
-        .draw_styled(
-            &PrimitiveStyleBuilder::new().fill_color(LUMA_BG).build(),
-            target,
-        )?;
+    Rectangle::new(Point::new(0, 0), Size::new(128, 128)).draw_styled(
+        &PrimitiveStyleBuilder::new().fill_color(LUMA_BG).build(),
+        target,
+    )?;
     header::draw(target, state)?;
 
     let body_top = header::BODY_TOP_Y;
@@ -79,10 +76,12 @@ where
     }
 
     let row_height: i32 = 12;
-    // Right edge of the meta text — 4 px gap before the per-row signal
+    // Right edge of the auth label — 10 px gap before the per-row signal
     // bars (which sit at `WIFI_BARS_X`, same column as the header bars so
-    // every WiFi strength indicator on screen aligns vertically).
-    let meta_right_x: i32 = WIFI_BARS_X - 4;
+    // every WiFi strength indicator on screen aligns vertically). The gap
+    // is wider than it needs to be because dropping the `ch{N}/` prefix
+    // freed up real estate — we use it to let the SSID grow to the right.
+    let meta_right_x: i32 = WIFI_BARS_X - 10;
 
     for (row, ap) in aps.iter().take(max_rows).enumerate() {
         let baseline = y_top + 10 + row as i32 * row_height;
@@ -90,11 +89,11 @@ where
             break;
         }
 
-        // SSID truncated so the right-side `ch{N}/{auth}` cell stays clear.
-        // Worst case is `ch149/Open` (10 glyphs ≈ 50 px in ProFont 10), so
-        // we cap SSID at 9 glyphs.
+        // SSID truncated so the right-side auth cell stays clear. Auth
+        // label is at most `WPA2`/`WPA3` (4 glyphs ≈ 20 px) plus the
+        // 10 px gap to bars, so SSID has the rest.
         let mut ssid: String<32> = String::new();
-        const MAX_SSID_CHARS: usize = 9;
+        const MAX_SSID_CHARS: usize = 12;
         let mut taken = 0;
         for ch in ap.ssid.chars() {
             if taken >= MAX_SSID_CHARS {
@@ -115,11 +114,11 @@ where
             target,
         );
 
-        // Channel + security, e.g. "ch11/WPA2" or "ch36/Open".
-        let mut meta: String<16> = String::new();
-        let _ = write!(&mut meta, "ch{}/{}", ap.channel, ap.auth.short());
+        // Security only, e.g. "WPA2", "Open", "WPA3". The channel was
+        // dropped — it's not useful info for picking a network and ate
+        // the SSID column.
         let _ = FONT_TINY.render_aligned(
-            meta.as_str(),
+            ap.auth.short(),
             Point::new(meta_right_x, baseline),
             VerticalPosition::Baseline,
             HorizontalAlignment::Right,
@@ -143,7 +142,9 @@ fn draw_bars<D, E>(target: &mut D, origin: Point, filled: u8) -> Result<(), E>
 where
     D: DrawTarget<Color = Gray4, Error = E>,
 {
-    let style_inactive = PrimitiveStyleBuilder::new().fill_color(LUMA_INACTIVE).build();
+    let style_inactive = PrimitiveStyleBuilder::new()
+        .fill_color(LUMA_INACTIVE)
+        .build();
     let style_accent = PrimitiveStyleBuilder::new().fill_color(LUMA_ACCENT).build();
     for bar in 0..WIFI_BAR_COUNT {
         let bar_h = 2 + bar * 2;

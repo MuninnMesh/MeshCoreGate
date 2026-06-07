@@ -85,6 +85,9 @@ Suggested strict JSON shape:
     "default_interval_secs": 600,
     "jitter_secs": 10
   },
+  "time": {
+    "utc_offset_minutes": -360
+  },
   "radio": {
     "frequency_hz": 910525000,
     "bandwidth_hz": 62500,
@@ -144,6 +147,7 @@ Validation rules:
 - Defaults should bias toward low channel utilization. The baseline polling interval is 10 minutes, and multiple producers are staggered across that interval.
 - Retry count is bounded; the default is five retries after the initial attempt and the current maximum is 10.
 - Jitter should be large enough to avoid synchronized restarts; the default window is 10 seconds and the current maximum is 60 seconds.
+- `time.utc_offset_minutes` is a fixed display offset from UTC in minutes. The host CLI injects `time.unix_time_seconds` during USB upload unless `--no-time-sync` is used; an RTC-capable board may persist/query that value through its board hook.
 - MeshCore `routing.path_mode` mirrors MeshCore `path.hash.mode`: `0` means
   1-byte hashes, `1` means 2-byte hashes, and `2` means 3-byte hashes. The
   current ESP32 outbound path is direct-only, so this setting is retained for
@@ -151,7 +155,7 @@ Validation rules:
 - Radio frequency, spreading factor, bandwidth, coding rate, TX power level, sync word, preamble length, IQ mode, and ramp time must be valid for the selected region and radio configuration.
 - `http`, when present, must be supported by the selected board capabilities.
 - `http.tokens` may be omitted, `null`, or empty; that disables bearer-header auth.
-- Display `node_display`, when display is enabled, should be one of `temperature`, `humidity`, `soc`, `battery_voltage`, `pressure`, `rssi`, or `latency`. These values currently read from the producer-level default `TelemetryMetrics` view. Channel-specific display selection is intentionally not in the config yet; it should be added only when the UI needs to distinguish equivalent channels such as INA3221 rail 1/2/3.
+- Display `node_display`, when display is enabled, should be one of `temperature`, `humidity`, `soc`, `battery_voltage`, `pressure`, `luminosity`, `rssi`, or `latency`. These values currently read from the producer-level default `TelemetryMetrics` view. Channel-specific display selection is intentionally not in the config yet; it should be added only when the UI needs to distinguish equivalent channels such as INA3221 rail 1/2/3.
 - Display `brightness_percent`, when present, is a 0-100 OLED brightness request. The platform maps it to the concrete display controller.
 
 The config stores the requested TX power level. The selected board variant maps that request to the driver setting actually used by the radio path and may attach an estimated conducted output power. This is important for boards with a front-end module, where the configured level and conducted output power are not linear.

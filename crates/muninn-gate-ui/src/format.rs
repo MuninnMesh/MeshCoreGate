@@ -143,6 +143,11 @@ pub fn write_display_value<const N: usize>(
             Some(value) => write!(line, "{:.0}h", value / 100.0),
             None => write_str(line, "--"),
         },
+        DisplayTelemetryValue::LuminosityLux => match metrics.luminosity_lux {
+            Some(value) if value < 10_000.0 => write!(line, "{:.0}lx", value),
+            Some(value) => write!(line, "{:.1}klx", value / 1000.0),
+            None => write_str(line, "--"),
+        },
         DisplayTelemetryValue::Rssi => match telemetry.rssi {
             Some(value) => write!(line, "{}", value),
             None => write_str(line, "--"),

@@ -2,7 +2,7 @@
 """ESP32-S3 serial monitor for Muninn Gate firmware.
 
 A robust serial monitoring tool designed for both interactive use and
-automated CI/agent workflows. Replaces `espflash monitor` which fails
+automated CI workflows. Replaces `espflash monitor` which fails
 in non-interactive contexts ("Failed to initialize input reader").
 
 Defaults target the Bifrost ProS3 (native USB-Serial/JTAG on /dev/ttyACM0);

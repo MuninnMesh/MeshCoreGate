@@ -1137,6 +1137,63 @@ where
         "gauge",
         |record| record.telemetry.and_then(|telemetry| telemetry.uptime_ms),
     )?;
+    // Repeater GET_STATUS stats (polled on a slower cadence than telemetry).
+    write_optional_producer_family(
+        out,
+        records,
+        "muninn_gate_node_noise_floor_dbm",
+        "Repeater radio noise floor in dBm (GET_STATUS).",
+        "gauge",
+        |record| record.telemetry.and_then(|t| t.status).map(|s| s.noise_floor_dbm),
+    )?;
+    write_optional_producer_family(
+        out,
+        records,
+        "muninn_gate_node_uptime_seconds",
+        "Repeater reported uptime in seconds (GET_STATUS).",
+        "gauge",
+        |record| record.telemetry.and_then(|t| t.status).map(|s| s.uptime_secs),
+    )?;
+    write_optional_producer_family(
+        out,
+        records,
+        "muninn_gate_node_packets_sent_total",
+        "Repeater total LoRa packets sent (GET_STATUS).",
+        "counter",
+        |record| record.telemetry.and_then(|t| t.status).map(|s| s.packets_sent),
+    )?;
+    write_optional_producer_family(
+        out,
+        records,
+        "muninn_gate_node_packets_recv_total",
+        "Repeater total LoRa packets received (GET_STATUS).",
+        "counter",
+        |record| record.telemetry.and_then(|t| t.status).map(|s| s.packets_recv),
+    )?;
+    write_optional_producer_family(
+        out,
+        records,
+        "muninn_gate_node_recv_errors_total",
+        "Repeater total LoRa receive errors (GET_STATUS).",
+        "counter",
+        |record| record.telemetry.and_then(|t| t.status).map(|s| s.recv_errors),
+    )?;
+    write_optional_producer_family(
+        out,
+        records,
+        "muninn_gate_node_tx_airtime_seconds_total",
+        "Repeater cumulative transmit airtime in seconds (GET_STATUS).",
+        "counter",
+        |record| record.telemetry.and_then(|t| t.status).map(|s| s.tx_airtime_secs),
+    )?;
+    write_optional_producer_family(
+        out,
+        records,
+        "muninn_gate_node_rx_airtime_seconds_total",
+        "Repeater cumulative receive airtime in seconds (GET_STATUS).",
+        "counter",
+        |record| record.telemetry.and_then(|t| t.status).map(|s| s.rx_airtime_secs),
+    )?;
     write_optional_channel_family(
         out,
         records,
@@ -1208,6 +1265,14 @@ where
         "Telemetry producer channel gas sensor resistance in ohms.",
         "gauge",
         |channel| channel.metrics.gas_resistance_ohms,
+    )?;
+    write_optional_channel_family(
+        out,
+        records,
+        "muninn_gate_node_channel_luminosity_lux",
+        "Telemetry producer channel luminosity in lux.",
+        "gauge",
+        |channel| channel.metrics.luminosity_lux,
     )?;
     write_optional_producer_family(
         out,
@@ -1436,6 +1501,7 @@ mod tests
         let mut store = FixedTelemetryStore::from_config(&config).unwrap();
         let producer_id = config.producers[0].id();
         let mut telemetry = ProducerTelemetry::new(producer_id, 1_000);
+        telemetry.set_channel_luminosity(0, 456.0).unwrap();
         telemetry.set_channel_voltage(1, 4.08).unwrap();
         telemetry.set_channel_temperature(2, 22.5).unwrap();
         telemetry.set_channel_gas_resistance(3, 123.45).unwrap();
@@ -1587,6 +1653,10 @@ mod tests
         assert!(!rendered.contains("muninn_gate_node_temperature_celsius{"));
         assert!(!rendered.contains("muninn_gate_node_humidity_percent{"));
         assert!(!rendered.contains("muninn_gate_node_pressure_pa{"));
+        assert!(!rendered.contains("muninn_gate_node_luminosity_lux{"));
+        assert!(rendered.contains(
+            "muninn_gate_node_channel_luminosity_lux{node=\"roof_repeater\",channel=\"0\"} 456"
+        ));
         assert!(rendered.contains(
             "muninn_gate_node_channel_battery_voltage{node=\"roof_repeater\",channel=\"1\"} 4.08"
         ));

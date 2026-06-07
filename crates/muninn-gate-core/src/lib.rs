@@ -51,6 +51,13 @@ pub use diagnostics::{
     render_diagnostics_json,
 };
 pub use error::Error;
+pub use muninn_gate_time::{
+    CST_UTC_OFFSET_MINUTES,
+    GatewayTime,
+    LocalDateTime,
+    RtcTimeSource,
+    TimeSettings,
+};
 pub use runtime::{GatewayRuntimeError, GatewayRuntimeState, HttpEndpoint, ServingInterfaces};
 pub use telemetry::{
     FixedTelemetryStore,
@@ -61,6 +68,7 @@ pub use telemetry::{
     ProducerPollMetrics,
     ProducerTelemetry,
     ProducerTelemetryChannel,
+    RepeaterStatus,
     TelemetryMetrics,
     TelemetryRecord,
     TelemetrySnapshot,

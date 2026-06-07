@@ -9,7 +9,6 @@ use embedded_graphics::primitives::{PrimitiveStyleBuilder, Rectangle, StyledDraw
 use heapless::String;
 use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 
-use super::header;
 use super::{
     FONT_BODY,
     FONT_HEADLINE,
@@ -20,6 +19,7 @@ use super::{
     LUMA_TEXT,
     NetworkPhase,
     UiState,
+    header,
 };
 
 pub fn draw<D, E>(target: &mut D, state: &UiState) -> Result<(), E>
@@ -40,11 +40,14 @@ fn clear<D, E>(target: &mut D) -> Result<(), E>
 where
     D: DrawTarget<Color = Gray4, Error = E>,
 {
-    Rectangle::new(Point::new(0, 0), embedded_graphics::geometry::Size::new(128, 128))
-        .draw_styled(
-            &PrimitiveStyleBuilder::new().fill_color(LUMA_BG).build(),
-            target,
-        )?;
+    Rectangle::new(
+        Point::new(0, 0),
+        embedded_graphics::geometry::Size::new(128, 128),
+    )
+    .draw_styled(
+        &PrimitiveStyleBuilder::new().fill_color(LUMA_BG).build(),
+        target,
+    )?;
     Ok(())
 }
 

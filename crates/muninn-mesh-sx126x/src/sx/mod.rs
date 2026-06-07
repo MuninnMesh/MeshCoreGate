@@ -23,7 +23,12 @@ type PinsWithoutAntenna<TNRST, TBUSY, TDIO1> = (TNRST, TBUSY, TDIO1);
 const NOP: u8 = 0x00;
 
 /// Maximum BUSY pin polls before returning a timeout.
-const BUSY_WAIT_POLLS: u32 = 500_000;
+///
+/// SX1262 calibration can legitimately hold BUSY for >100 ms on high-power
+/// modules with external TCXO/front-end supply sequencing. Keep this high
+/// enough that `Calibrate(all)` does not false-timeout; higher layers still
+/// apply their own coarse millisecond watchdogs around long operations.
+const BUSY_WAIT_POLLS: u32 = 5_000_000;
 
 /// Maximum DIO1 pin polls before returning a timeout.
 const DIO1_WAIT_POLLS: u32 = 500_000;
@@ -127,52 +132,59 @@ where
         self.set_standby(crate::op::StandbyConfig::StbyRc)?;
         self.wait_on_busy()?;
 
-        // 2. Define the protocol (LoRa® or FSK) with the command SetPacketType(...)
-        self.set_packet_type(conf.packet_type)?;
+        // 2. Select the regulator path after the reset that this init routine owns.
+        self.set_regulator_mode_dcdc()?;
         self.wait_on_busy()?;
 
-        // 3. Define the RF frequency with the command SetRfFrequency(...)
-        self.set_rf_frequency(conf.rf_freq)?;
-        self.wait_on_busy()?;
-
+        // 3. Bring up the external TCXO before any oscillator-dependent RF calibration/frequency
+        //    programming. DIO3 TCXO control is reset state, so configure it immediately after the
+        //    reset-owned standby.
         if let Some((tcxo_voltage, tcxo_delay)) = conf.tcxo_opts {
             self.set_dio3_as_tcxo_ctrl(tcxo_voltage, tcxo_delay)?;
             self.wait_on_busy()?;
         }
+
+        // 4. Define the protocol (LoRa® or FSK) with the command SetPacketType(...)
+        self.set_packet_type(conf.packet_type)?;
+        self.wait_on_busy()?;
+
+        // 5. Define the RF frequency with the command SetRfFrequency(...)
+        self.set_rf_frequency(conf.rf_freq)?;
+        self.wait_on_busy()?;
 
         // Calibrate
         self.calibrate(conf.calib_param)?;
         self.wait_on_busy()?;
         // CalibrateImage is called separately in radio.rs with proper band bucketing
 
-        // 4. Define the Power Amplifier configuration with the command SetPaConfig(...)
+        // 6. Define the Power Amplifier configuration with the command SetPaConfig(...)
         self.set_pa_config(conf.pa_config)?;
         self.wait_on_busy()?;
 
-        // 5. Define output power and ramping time with the command SetTxParams(...)
+        // 7. Define output power and ramping time with the command SetTxParams(...)
         self.set_tx_params(conf.tx_params)?;
         self.wait_on_busy()?;
 
-        // 6. Define where the data payload will be stored with the command
+        // 8. Define where the data payload will be stored with the command
         //    SetBufferBaseAddress(...)
         self.set_buffer_base_address(0x00, 0x00)?;
         self.wait_on_busy()?;
 
-        // 7. Send the payload to the data buffer with the command WriteBuffer(...)
+        // 9. Send the payload to the data buffer with the command WriteBuffer(...)
         // This is done later in SX126x::write_bytes
 
-        // 8. Define the modulation parameter according to the chosen protocol with the command
+        // 10. Define the modulation parameter according to the chosen protocol with the command
         //    SetModulationParams(...) 1
         self.set_mod_params(conf.mod_params)?;
         self.wait_on_busy()?;
 
-        // 9. Define the frame format to be used with the command SetPacketParams(...) 2
+        // 11. Define the frame format to be used with the command SetPacketParams(...) 2
         if let Some(packet_params) = conf.packet_params {
             self.set_packet_params(packet_params)?;
             self.wait_on_busy()?;
         }
 
-        // 10. Configure DIO and IRQ: use the command SetDioIrqParams(...) to select TxDone IRQ and
+        // 12. Configure DIO and IRQ: use the command SetDioIrqParams(...) to select TxDone IRQ and
         //     map this IRQ to a DIO (DIO1,
         // DIO2 or DIO3)
         let irq_mask = conf
@@ -191,7 +203,7 @@ where
             self.wait_on_busy()?;
         }
 
-        // 11. Optionally define the LoRa sync word via direct register access.
+        // 13. Optionally define the LoRa sync word via direct register access.
         if let Some(sync_word) = conf.sync_word {
             self.set_sync_word(sync_word)?;
             self.wait_on_busy()?;
@@ -551,10 +563,11 @@ where
     pub fn get_irq_status(&mut self) -> Result<IrqStatus, SxError<TSPIERR, TPINERR>>
     {
         self.wait_on_busy()?;
-        let mut status = [NOP, NOP, NOP];
-        let mut ops = [Operation::Write(&[0x12]), Operation::Read(&mut status)];
-        self.spi.transaction(&mut ops).map_err(SpiError::Transfer)?;
-        let irq_status: [u8; 2] = [status[1], status[2]];
+        let mut status = [0x12, NOP, NOP, NOP];
+        self.spi
+            .transfer_in_place(&mut status)
+            .map_err(SpiError::Transfer)?;
+        let irq_status: [u8; 2] = [status[2], status[3]];
         Ok(u16::from_be_bytes(irq_status).into())
     }
 
@@ -563,9 +576,9 @@ where
     {
         self.wait_on_busy()?;
         let mask = Into::<u16>::into(mask).to_be_bytes();
-        let mut ops = [Operation::Write(&[0x02]), Operation::Write(&mask)];
+        let buf = [0x02, mask[0], mask[1]];
         self.spi
-            .transaction(&mut ops)
+            .write(&buf)
             .map_err(SpiError::Write)
             .map_err(Into::into)
     }
@@ -739,17 +752,18 @@ where
     }
 
     /// Busily wait for the busy pin to go low.
-    /// Times out after ~50ms to prevent infinite hangs if the SX1262 gets stuck
+    /// Times out after a bounded poll budget to prevent infinite hangs if the SX1262 gets stuck
     /// (e.g. after voltage droop during TX corrupts chip state).
-    /// Normal operations clear BUSY in <1ms; TCXO warmup + calibration can take ~25ms.
+    /// Normal operations clear BUSY in <1ms; TCXO warmup + calibration can take >100ms on some
+    /// modules.
     pub fn wait_on_busy(&mut self) -> Result<(), SxError<TSPIERR, TPINERR>>
     {
         self.spi
             .transaction(&mut [Operation::DelayNs(1000)])
             .map_err(SpiError::Transfer)?;
-        // At 80 MHz, each GPIO read + branch ≈ 100-200ns. 500_000 iterations ≈ 50-100ms.
-        // This covers TCXO warmup (20ms) + calibration (3.5ms) + CalibrateImage (8ms)
-        // with generous margin, while still preventing infinite hangs.
+        // Keep this a raw poll loop: the driver is intentionally clock-agnostic.
+        // Board/radio owners that need wall-clock deadlines wrap long operations
+        // with their own timeout logic.
         for _ in 0..BUSY_WAIT_POLLS {
             match self.busy_pin.is_high() {
                 Ok(true) => {},
@@ -764,6 +778,12 @@ where
     pub fn try_is_busy(&mut self) -> Result<bool, PinError<TPINERR>>
     {
         self.busy_pin.is_high().map_err(PinError::Input)
+    }
+
+    /// Check the DIO1 IRQ pin and report GPIO read failures.
+    pub fn try_dio1_is_high(&mut self) -> Result<bool, PinError<TPINERR>>
+    {
+        self.dio1_pin.is_high().map_err(PinError::Input)
     }
 
     /// Check whether the radio is busy, returning `false` on GPIO read failure.

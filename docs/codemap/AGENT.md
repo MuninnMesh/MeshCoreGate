@@ -76,7 +76,7 @@ Rules:
 ### `crates/muninn-gate-board-bifrost-pros3`
 
 Bifrost Gate variant — Unexpected Maker ProS3 / ProS3[D] + Adafruit SSD1327
-128×128 grayscale I2C OLED + future EBYTE E22P-915M30S LoRa.
+128×128 grayscale I2C OLED + Seeed Wio-SX1262 LoRa (SX1262).
 
 Owns:
 

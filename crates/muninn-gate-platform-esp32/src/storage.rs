@@ -101,6 +101,26 @@ pub fn reserve_request_tag_seed(fallback_seed: u32, reserve_count: u32)
     Ok(current_seed)
 }
 
+/// Reserve a MeshCore timestamp/tag range while ignoring stale seeds outside
+/// the caller's accepted range.
+pub fn reserve_request_tag_seed_bounded(
+    fallback_seed: u32,
+    reserve_count: u32,
+    max_accepted_seed: u32,
+) -> Result<u32, StorageError>
+{
+    let current_seed = load_request_tag_seed()?
+        .filter(|seed| *seed <= max_accepted_seed)
+        .unwrap_or(fallback_seed);
+    let current_seed = current_seed.max(fallback_seed);
+    let next_seed = current_seed
+        .checked_add(reserve_count)
+        .ok_or(StorageError::Corrupt)?;
+    let document = load_config_document()?;
+    save_config_bytes_with_request_tag_seed(document.as_slice(), Some(next_seed))?;
+    Ok(current_seed)
+}
+
 /// Load the newest valid config document from flash.
 fn load_config_document() -> Result<Vec<u8, USB_CONFIG_JSON_BYTES>, StorageError>
 {

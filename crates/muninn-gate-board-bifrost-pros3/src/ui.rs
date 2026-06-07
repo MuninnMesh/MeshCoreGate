@@ -16,18 +16,31 @@
 //! The driver only flushes on demand (caller invokes `display.flush()` after
 //! a render); each screen is internally responsible for clearing its area.
 
+pub mod boot;
+mod connecting;
 mod header;
+mod operational;
+mod ota;
 mod provisioning;
+pub mod spinner;
 mod state;
 mod status;
 mod wifi;
 
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Gray4;
-use u8g2_fonts::FontRenderer;
-use u8g2_fonts::fonts;
+use u8g2_fonts::{FontRenderer, fonts};
 
-pub use self::state::{AuthLabel, MAX_WIFI_APS, NetworkPhase, UiState, WifiAp};
+pub use self::state::{
+    AuthLabel,
+    MAX_WIFI_APS,
+    NetworkPhase,
+    OtaUpdateStatus,
+    PollStatus,
+    ProducerSummary,
+    UiState,
+    WifiAp,
+};
 
 /// Background luma (panel off).
 pub const LUMA_BG: Gray4 = Gray4::new(0);
@@ -60,19 +73,30 @@ pub const FONT_HEADLINE: FontRenderer =
     FontRenderer::new::<fonts::u8g2_font_profont15_tf>().with_ignore_unknown_chars(true);
 
 /// Top-level screen selector. The runner picks which screen to render based
-/// on the current `UiState` (provisioning vs. connected vs. error etc).
+/// on the current `UiState`.
 ///
-/// `Status` and `WifiScan` are wired up for the next phase (after config
-/// storage and WiFi association land); only `Provisioning` is dispatched in
-/// the current bring-up loop, so the other variants live behind `dead_code`.
-#[allow(dead_code, reason = "forward-looking variants used once config storage + association land")]
+/// `Status` and `WifiScan` are wired up for the next phase (after WiFi
+/// association lands); the others are live today.
+#[allow(
+    dead_code,
+    reason = "Status + WifiScan are queued for the post-telemetry milestone"
+)]
 #[derive(Debug, Clone, Copy)]
 pub enum Screen
 {
-    /// Default operating screen: gateway status + battery + network.
+    /// Boot splash (centered headline + orbital spinner).
+    Booting,
+    /// Forward-looking compact status screen (currently unused).
     Status,
     /// Pre-provisioning screen: prompt user + show visible WiFi networks.
     Provisioning,
+    /// Have a config; trying to associate with the configured SSID.
+    Connecting,
+    /// Online — show SSID/IP + producer list, with a LoRa-not-wired warning
+    /// until the SX1262 path is soldered in.
+    Operational,
+    /// Firmware OTA upload / apply screen.
+    OtaUpdate,
     /// WiFi scan results screen (used while joining or recovering from error).
     WifiScan,
 }
@@ -84,8 +108,12 @@ where
     D: DrawTarget<Color = Gray4, Error = E>,
 {
     match screen {
+        Screen::Booting => boot::draw(target, state),
         Screen::Status => status::draw(target, state),
         Screen::Provisioning => provisioning::draw(target, state),
+        Screen::Connecting => connecting::draw(target, state),
+        Screen::Operational => operational::draw(target, state),
+        Screen::OtaUpdate => ota::draw(target, state),
         Screen::WifiScan => wifi::draw_scan(target, state),
     }
 }

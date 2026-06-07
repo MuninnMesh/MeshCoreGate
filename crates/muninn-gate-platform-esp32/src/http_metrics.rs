@@ -70,7 +70,7 @@ pub fn route_request(request: &[u8]) -> HttpRoute
 {
     if request_path_is(request, b"/metrics") {
         HttpRoute::Metrics
-    } else if request_path_is(request, b"/logs") {
+    } else if request_path_is(request, b"/logs") || request_path_is(request, b"/diagnostics") {
         HttpRoute::Logs
     } else if request_path_is(request, b"/poll") {
         HttpRoute::PollNow

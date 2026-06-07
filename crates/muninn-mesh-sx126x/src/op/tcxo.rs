@@ -2,7 +2,7 @@
 
 /// DIO3 voltage level used to power or control a TCXO.
 #[repr(u8)]
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum TcxoVoltage
 {
     /// 1.6 V TCXO control voltage.

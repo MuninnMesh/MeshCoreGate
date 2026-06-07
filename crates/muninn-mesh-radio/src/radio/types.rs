@@ -11,6 +11,7 @@ use muninn_mesh_meshcore_lib::{
 };
 use muninn_mesh_sx126x::op::modulation::{LoRaBandWidth, LoRaSpreadFactor, LoraCodingRate};
 use muninn_mesh_sx126x::op::rxtx::RampTime;
+use muninn_mesh_sx126x::op::tcxo::TcxoVoltage;
 
 /// Default TCXO startup delay in milliseconds.
 pub const LORA_TCXO_DELAY_MS: u32 = 20;
@@ -124,6 +125,8 @@ pub struct MeshRadioConfig
     pub tx_ramp_time:  RampTime,
     /// Whether the radio driver should enable TCXO control during initialization.
     pub use_tcxo:      bool,
+    /// DIO3 voltage used when TCXO control is enabled.
+    pub tcxo_voltage:  TcxoVoltage,
     /// TCXO startup delay in milliseconds.
     pub tcxo_delayms:  u32,
 }
@@ -142,6 +145,7 @@ impl Default for MeshRadioConfig
             iq_inverted:   false,
             tx_ramp_time:  RampTime::Ramp200u,
             use_tcxo:      true,
+            tcxo_voltage:  TcxoVoltage::Volt1_8,
             tcxo_delayms:  LORA_TCXO_DELAY_MS,
         }
     }

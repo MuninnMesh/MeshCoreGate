@@ -21,8 +21,10 @@ embassy-time = { workspace = true, features = ["generic-queue-8"] }
 esp-alloc.workspace = true
 esp-hal = { workspace = true, features = ["esp32s3", "unstable"] }
 esp-hal-embassy = { workspace = true, features = ["esp32s3"] }
+esp-hal-ota = { workspace = true, features = ["esp32s3"] }
 esp-println = { workspace = true, features = ["esp32s3", "jtag-serial"] }
 esp-rom-sys = { workspace = true, features = ["esp32s3"] }
+esp-storage = { workspace = true, features = ["esp32s3"] }
 esp-wifi = { workspace = true, default-features = false, features = ["esp32s3", "wifi", "smoltcp", "log-04", "builtin-scheduler", "esp-alloc"] }
 esp-wifi-sys = { workspace = true, features = ["esp32s3"] }
 heapless.workspace = true

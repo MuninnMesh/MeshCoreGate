@@ -6,11 +6,13 @@ use crate::config::{GatewayConfig, MAX_TELEMETRY_PRODUCERS};
 use crate::{Error, TelemetryProducerConfig, TelemetryProducerId, TelemetryStore};
 
 /// Maximum retained MeshCore/LPP telemetry channels per producer.
-pub const MAX_TELEMETRY_CHANNELS: usize = 6;
+pub const MAX_TELEMETRY_CHANNELS: usize = 8;
 /// MeshCore self-device LPP channel.
 pub const MESHCORE_SELF_CHANNEL: u8 = 1;
 /// Cayenne LPP analog input data type.
 pub const LPP_ANALOG_INPUT: u8 = 2;
+/// Cayenne LPP luminosity data type.
+pub const LPP_LUMINOSITY: u8 = 101;
 /// Cayenne LPP temperature data type.
 pub const LPP_TEMPERATURE: u8 = 103;
 /// Cayenne LPP relative humidity data type.
@@ -30,7 +32,6 @@ const LPP_DIGITAL_INPUT: u8 = 0;
 const LPP_DIGITAL_OUTPUT: u8 = 1;
 const LPP_ANALOG_OUTPUT: u8 = 3;
 const LPP_GENERIC_SENSOR: u8 = 100;
-const LPP_LUMINOSITY: u8 = 101;
 const LPP_PRESENCE: u8 = 102;
 const LPP_ACCELEROMETER: u8 = 113;
 const LPP_FREQUENCY: u8 = 118;
@@ -48,8 +49,9 @@ const LPP_SWITCH: u8 = 142;
 /// Reusable sensor metrics reported by a producer or one producer channel.
 ///
 /// This intentionally tracks only the MeshCore sensor fields Muninn Gate
-/// currently bridges: MCU battery/temperature, SHT4x temperature/humidity,
-/// BME680 temperature/humidity/pressure/gas, and INA3221 voltage/current/power.
+/// currently bridges: MCU battery/temperature, TSL2591 luminosity, SHT4x
+/// temperature/humidity, BME680 temperature/humidity/pressure/gas, and INA3221
+/// voltage/current/power.
 /// Fields stay optional because a given channel reports only a small subset.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct TelemetryMetrics
@@ -72,6 +74,8 @@ pub struct TelemetryMetrics
     pub pressure_pa:         Option<f32>,
     /// Gas sensor resistance in ohms.
     pub gas_resistance_ohms: Option<f32>,
+    /// Luminosity in lux.
+    pub luminosity_lux:      Option<f32>,
 }
 
 /// Last-known values for one MeshCore/LPP telemetry channel.
@@ -111,6 +115,7 @@ impl TelemetryMetrics
             humidity_percent:    None,
             pressure_pa:         None,
             gas_resistance_ohms: None,
+            luminosity_lux:      None,
         }
     }
 
@@ -144,6 +149,9 @@ impl TelemetryMetrics
         if other.gas_resistance_ohms.is_some() {
             self.gas_resistance_ohms = other.gas_resistance_ohms;
         }
+        if other.luminosity_lux.is_some() {
+            self.luminosity_lux = other.luminosity_lux;
+        }
     }
 }
 
@@ -155,6 +163,26 @@ impl TelemetryMetrics
 /// that reports each metric type. They let simple serial, Prometheus, and OLED
 /// consumers show one value per producer without choosing a channel. Consumers
 /// that need precise multi-channel data should use [`Self::channels`] instead.
+/// Repeater self-reported stats from a MeshCore GET_STATUS response.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RepeaterStatus
+{
+    /// Radio noise floor in dBm.
+    pub noise_floor_dbm: i16,
+    /// Producer uptime in seconds.
+    pub uptime_secs:     u32,
+    /// Total LoRa packets sent.
+    pub packets_sent:    u32,
+    /// Total LoRa packets received.
+    pub packets_recv:    u32,
+    /// Total LoRa receive errors.
+    pub recv_errors:     u32,
+    /// Cumulative transmit airtime in seconds.
+    pub tx_airtime_secs: u32,
+    /// Cumulative receive airtime in seconds.
+    pub rx_airtime_secs: u32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ProducerTelemetry
 {
@@ -170,6 +198,8 @@ pub struct ProducerTelemetry
     pub snr:          Option<f32>,
     /// Producer-reported uptime in milliseconds.
     pub uptime_ms:    Option<u64>,
+    /// Repeater stats from the most recent GET_STATUS poll (separate cadence).
+    pub status:       Option<RepeaterStatus>,
     /// Channel-specific telemetry values keyed by MeshCore/LPP channel ID.
     pub channels:     [Option<ProducerTelemetryChannel>; MAX_TELEMETRY_CHANNELS],
 }
@@ -186,6 +216,7 @@ impl ProducerTelemetry
             rssi: None,
             snr: None,
             uptime_ms: None,
+            status: None,
             channels: [None; MAX_TELEMETRY_CHANNELS],
         }
     }
@@ -242,6 +273,9 @@ impl ProducerTelemetry
         }
         if other.uptime_ms.is_some() {
             self.uptime_ms = other.uptime_ms;
+        }
+        if other.status.is_some() {
+            self.status = other.status;
         }
         for other_channel in other.channels() {
             let _ = self.update_channel(other_channel.channel_id, |channel| {
@@ -354,6 +388,17 @@ impl ProducerTelemetry
             channel.metrics.gas_resistance_ohms = Some(value);
         })
     }
+
+    /// Store a channel luminosity value and update the producer default value.
+    pub fn set_channel_luminosity(&mut self, channel_id: u8, value: f32) -> Result<(), Error>
+    {
+        if self.metrics.luminosity_lux.is_none() {
+            self.metrics.luminosity_lux = Some(value);
+        }
+        self.update_channel(channel_id, |channel| {
+            channel.metrics.luminosity_lux = Some(value);
+        })
+    }
 }
 
 /// Decode supported Cayenne LPP values into producer telemetry.
@@ -374,6 +419,11 @@ pub fn decode_lpp_payload(telemetry: &mut ProducerTelemetry, payload: &[u8])
             LPP_TEMPERATURE if index.saturating_add(2) <= payload.len() => {
                 let value = i16::from_be_bytes([payload[index], payload[index + 1]]);
                 let _ = telemetry.set_channel_temperature(channel_id, value as f32 / 10.0);
+                index = index.saturating_add(2);
+            },
+            LPP_LUMINOSITY if index.saturating_add(2) <= payload.len() => {
+                let value = u16::from_be_bytes([payload[index], payload[index + 1]]);
+                let _ = telemetry.set_channel_luminosity(channel_id, value as f32);
                 index = index.saturating_add(2);
             },
             LPP_RELATIVE_HUMIDITY if index < payload.len() => {
@@ -1157,6 +1207,7 @@ mod tests
     fn decodes_six_environment_and_power_channels()
     {
         let mut payload = std::vec::Vec::new();
+        push_u16(&mut payload, 0, LPP_LUMINOSITY, 1_234);
         push_i16(&mut payload, 1, LPP_TEMPERATURE, 234);
         push_u16(&mut payload, 1, LPP_VOLTAGE, 408);
         push_u8(&mut payload, 1, LPP_PERCENTAGE, 87);
@@ -1181,13 +1232,17 @@ mod tests
         let mut telemetry = ProducerTelemetry::new(producer_id, 42);
         decode_lpp_payload(&mut telemetry, &payload);
 
-        assert_eq!(telemetry.channels().count(), 6);
+        assert_eq!(telemetry.channels().count(), 7);
+        assert_f32_eq(telemetry.metrics.luminosity_lux, 1_234.0);
         assert_f32_eq(telemetry.metrics.battery_voltage, 4.08);
         assert_f32_eq(telemetry.metrics.battery_percent, 87.0);
         assert_f32_eq(telemetry.metrics.voltage, 4.08);
         assert_f32_eq(telemetry.metrics.current_amps, -1.234);
         assert_f32_eq(telemetry.metrics.power_watts, 15.0);
         assert_f32_eq(telemetry.metrics.gas_resistance_ohms, 123.45);
+
+        let tsl2591 = telemetry.channel(0).unwrap().metrics;
+        assert_f32_eq(tsl2591.luminosity_lux, 1_234.0);
 
         let mcu = telemetry.channel(1).unwrap().metrics;
         assert_f32_eq(mcu.temperature_celsius, 23.4);
@@ -1224,14 +1279,16 @@ mod tests
         let mut partial = ProducerTelemetry::new(producer_id, 200);
         partial.rssi = Some(-28);
         partial.snr = Some(12.0);
+        partial.set_channel_luminosity(0, 777.0).unwrap();
         partial.set_channel_voltage(1, 4.23).unwrap();
         partial.set_channel_temperature(1, 27.7).unwrap();
 
         telemetry.merge_from(partial);
 
         assert_eq!(telemetry.timestamp_ms, 200);
-        assert_eq!(telemetry.channels().count(), 3);
+        assert_eq!(telemetry.channels().count(), 4);
         assert_eq!(telemetry.rssi, Some(-28));
+        assert_f32_eq(telemetry.channel(0).unwrap().metrics.luminosity_lux, 777.0);
         assert_f32_eq(telemetry.channel(1).unwrap().metrics.battery_voltage, 4.23);
         assert_f32_eq(
             telemetry.channel(1).unwrap().metrics.temperature_celsius,

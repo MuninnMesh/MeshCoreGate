@@ -13,6 +13,7 @@ use muninn_mesh_meshcore_lib::{MeshMessage, MeshTxFrame};
 use muninn_mesh_sx126x::SX126x;
 use muninn_mesh_sx126x::op::init::StandbyConfig;
 use muninn_mesh_sx126x::op::irq::IrqMask;
+use muninn_mesh_sx126x::op::modulation::{LoRaBandWidth, LoraCodingRate};
 use muninn_mesh_sx126x::op::packet::{
     LoRaCrcType,
     LoRaHeaderType,
@@ -56,12 +57,22 @@ const NOISE_FLOOR_SAMPLE_COUNT: usize = 60;
 const RADIO_LONG_BUSY_TIMEOUT_MS: u32 = 1000;
 /// Short state-transition BUSY timeout.
 const RADIO_SHORT_BUSY_TIMEOUT_MS: u32 = 100;
-/// SX1262 TX command timeout.
-const TX_TIMEOUT_MS: u32 = 6000;
-/// Software timeout for TX completion polling.
-const TX_SOFT_TIMEOUT_MS: u64 = 6500;
+/// Minimum SX1262 TX command timeout. Longer-airtime LoRa configs extend this
+/// dynamically from the computed packet airtime.
+const TX_MIN_TIMEOUT_MS: u32 = 6000;
+/// Extra SX1262 command-timeout budget beyond the computed LoRa airtime.
+const TX_TIMEOUT_MARGIN_MS: u32 = 2000;
+/// Absolute guardrail for malformed configs or airtime-estimator mistakes.
+const TX_MAX_TIMEOUT_MS: u32 = 60_000;
+/// Extra host-side polling budget beyond the SX1262 command timeout.
+const TX_SOFT_TIMEOUT_MARGIN_MS: u64 = 750;
 /// Delay between TX IRQ polling attempts.
 const TX_POLL_INTERVAL_MS: u64 = 2;
+/// Valid TX completion IRQ: only TxDone may be set while waiting for SetTx.
+const IRQ_TX_DONE_ONLY: u16 = 0x0001;
+/// Non-TX IRQ bits that are not valid evidence of TX completion. Timeout
+/// is intentionally excluded and handled as a terminal TX failure.
+const IRQ_NON_TX_BITS: u16 = 0x01FE;
 
 /// Generic SX126x radio owner.
 pub struct MeshRadio<TSPI, TNRST, TBUSY, TANT, TDIO1, TSWITCH, TCLOCK>
@@ -126,6 +137,13 @@ where
     /// Accumulated `GetDeviceErrors` bits since the last `rx_stats()`
     /// read. Swapped to 0 on copy.
     device_errors:             u16,
+    /// Last raw `GetIrqStatus` value sampled at the moment a TX
+    /// completed (or timed out). Exposed via [`Self::last_tx_irq_raw`]
+    /// for diagnostic logging from the board crate; useful for
+    /// distinguishing "real TX done" (irq=0x0001) from "stale or
+    /// corrupted irq" (e.g. 0x0101, 0x5151, 0xFFFF) without dragging
+    /// a logger dependency into this crate.
+    last_tx_irq_raw:           u16,
 }
 
 impl<TSPI, TNRST, TBUSY, TANT, TDIO1, TSPIERR, TPINERR, TSWITCH, TCLOCK>
@@ -192,6 +210,14 @@ where
             .map_err(|_| MeshRadioError::InitFailed)?;
         wait_busy_timeout(&mut device, &mut clock, RADIO_LONG_BUSY_TIMEOUT_MS).await?;
 
+        // 5. Clear any device-error bits set during calibration. These bits are sticky until
+        //    explicitly cleared, and stale calibration markers (RC64K_CALIB_ERR, IMG_CALIB_ERR,
+        //    etc.) pollute the first TX's diagnostics — and on the Bifrost / Wio-SX1262 hand-wired
+        //    path we observed `dev_err=0x5151` left over from boot, which made every TX look like a
+        //    PLL/PA failure even when the chip was fine.
+        let _ = device.clear_device_errors();
+        wait_busy_timeout(&mut device, &mut clock, RADIO_SHORT_BUSY_TIMEOUT_MS).await?;
+
         // Radio stays in standby after init to reduce boot power draw.
         // Call start_rx() from the radio task after boot staging completes.
         log::debug!("LORA init OK (standby, RX deferred)");
@@ -223,7 +249,16 @@ where
             has_rssi_inst: false,
             chip_mode: 0,
             device_errors: 0,
+            last_tx_irq_raw: 0,
         })
+    }
+
+    /// Mutable access to the board-specific clock/delay provider. Board
+    /// integrations use this for local side effects that must continue
+    /// during radio-owned blocking delays.
+    pub fn clock_mut(&mut self) -> &mut TCLOCK
+    {
+        &mut self.clock
     }
 
     /// Reset and reinitialize the SX1262 using the existing SPI bus/pins.
@@ -350,6 +385,16 @@ where
         self.device.apply_iq_polarity(self.config.iq_inverted)
     }
 
+    /// Most recent raw `GetIrqStatus` value seen at the moment TX
+    /// completed (or `0` if no TX has succeeded yet). A real TX done
+    /// reads `0x0001` (just the TxDone bit). Patterns like `0x0101`
+    /// or `0x5151` indicate corrupted SPI MISO data, not a genuine
+    /// completion.
+    pub fn last_tx_irq_raw(&self) -> u16
+    {
+        self.last_tx_irq_raw
+    }
+
     /// Snapshot of RX/TX observability counters for the UI layer.
     ///
     /// Takes `&mut self` because it drains the accumulated
@@ -387,7 +432,7 @@ where
     pub fn sample_health(&mut self)
     {
         // Status first — lets us bail before running rssi_inst if we
-        // are mid-TX (GetRssiInst during TX returns garbage).
+        // are mid-TX (GetRssiInst during TX returns invalid data).
         let chip_mode = match self.device.get_status() {
             Ok(status) => {
                 let m = status.chip_mode().map(|cm| cm as u8).unwrap_or(0);
@@ -461,6 +506,15 @@ where
         timestamp: u32,
     ) -> Result<Option<MeshRxFrame>, MeshRadioError>
     {
+        match self.device.try_dio1_is_high() {
+            Ok(true) => {},
+            Ok(false) => return Ok(None),
+            Err(_) => {
+                self.rx_irq_error = self.rx_irq_error.wrapping_add(1);
+                return Err(MeshRadioError::DeviceIo);
+            },
+        }
+
         let irq = match self.device.get_irq_status() {
             Ok(irq) => irq,
             Err(_) => {
@@ -468,6 +522,24 @@ where
                 return Err(MeshRadioError::DeviceIo);
             },
         };
+
+        // Reserved bits (10..=15) set means MISO returned corrupted /
+        // floating-high data — treat the read as "nothing yet" rather
+        // than fabricating an RX frame from junk.
+        if irq.raw() & 0xFC00 != 0 {
+            return Ok(None);
+        }
+
+        // TxDone cannot be produced by continuous RX. If it appears here,
+        // the IRQ read is stale or corrupted; treating the same word as
+        // RxDone fabricates packets from whatever happens to be in the RX
+        // buffer.
+        if irq.tx_done() {
+            self.rx_irq_error = self.rx_irq_error.wrapping_add(1);
+            let _ = self.device.clear_irq_status(IrqMask::all());
+            let _ = self.device.set_rx(RxTxTimeout::continuous_rx());
+            return Ok(None);
+        }
 
         if !irq.rx_done() && !irq.timeout() && !irq.crc_err() && !irq.header_error() {
             return Ok(None);
@@ -506,16 +578,26 @@ where
                         .is_ok()
                     {
                         let meta = decode_packet_meta(&payload[..read_len]);
-                        let rssi_dbm = packet_status
-                            .as_ref()
-                            .map(|status| status.rssi_pkt())
-                            .map(round_i16)
-                            .unwrap_or(-127);
-                        let snr_tenth_db = packet_status
-                            .as_ref()
-                            .map(|status| status.snr_pkt() * 10.0)
-                            .map(round_i16)
-                            .unwrap_or(0);
+                        let Some(packet_status) = packet_status.as_ref() else {
+                            self.rx_status_error = self.rx_status_error.wrapping_add(1);
+                            let _ = self.device.clear_irq_status(IrqMask::all());
+                            let _ = self.device.set_rx(RxTxTimeout::continuous_rx());
+                            return Ok(None);
+                        };
+                        let rssi_dbm = round_i16(packet_status.rssi_pkt());
+                        if rssi_dbm >= -5 {
+                            self.rx_status_error = self.rx_status_error.wrapping_add(1);
+                            log::warn!(
+                                "LORA RX ignored impossible packet status rssi={} len={} offset={}",
+                                rssi_dbm,
+                                read_len,
+                                offset,
+                            );
+                            let _ = self.device.clear_irq_status(IrqMask::all());
+                            let _ = self.device.set_rx(RxTxTimeout::continuous_rx());
+                            return Ok(None);
+                        }
+                        let snr_tenth_db = round_i16(packet_status.snr_pkt() * 10.0);
 
                         // Cache last-RX link quality for RxStats.
                         self.last_rssi_dbm = rssi_dbm;
@@ -664,26 +746,33 @@ where
     {
         let iq_inverted = self.config.iq_inverted;
 
-        // Clear IRQs before TX to prevent race condition with stale TxDone
+        // Clear IRQs before TX to prevent race condition with stale TxDone.
         self.device
             .clear_irq_status(IrqMask::all())
             .map_err(|_| MeshRadioError::DeviceIo)?;
 
-        // Write payload to buffer at offset 0
+        // Standby is the safe state for FIFO writes and packet-param changes.
+        // TCXO-backed boards are more reliable if TX setup keeps the external
+        // oscillator active instead of bouncing through RC standby.
+        let standby_config = if self.config.use_tcxo {
+            StandbyConfig::StbyXOSC
+        } else {
+            StandbyConfig::StbyRc
+        };
+        let standby_timeout_ms = if self.config.use_tcxo {
+            RADIO_LONG_BUSY_TIMEOUT_MS
+        } else {
+            RADIO_SHORT_BUSY_TIMEOUT_MS
+        };
+        self.device
+            .set_standby(standby_config)
+            .map_err(|_| MeshRadioError::DeviceIo)?;
+        wait_busy_timeout(&mut self.device, &mut self.clock, standby_timeout_ms).await?;
+
+        // Write payload to buffer at offset 0.
         self.device
             .write_buffer(0x00, payload)
             .map_err(|_| MeshRadioError::DeviceIo)?;
-
-        // Transition from RX to Standby before reconfiguring
-        self.device
-            .set_standby(StandbyConfig::StbyRc)
-            .map_err(|_| MeshRadioError::DeviceIo)?;
-        wait_busy_timeout(
-            &mut self.device,
-            &mut self.clock,
-            RADIO_SHORT_BUSY_TIMEOUT_MS,
-        )
-        .await?;
 
         // Set packet params for TX (payload length = actual length)
         let tx_params = LoRaPacketParams::default()
@@ -714,38 +803,116 @@ where
         )
         .await?;
 
-        // Start transmission with timeout
+        let estimated_airtime_ms = estimate_lora_airtime_ms(&self.config, payload.len());
+        let tx_timeout_ms = estimated_airtime_ms
+            .saturating_add(TX_TIMEOUT_MARGIN_MS)
+            .clamp(TX_MIN_TIMEOUT_MS, TX_MAX_TIMEOUT_MS);
+        let soft_timeout_ms = u64::from(tx_timeout_ms).saturating_add(TX_SOFT_TIMEOUT_MARGIN_MS);
+
+        // Force frequency synthesis before TX on TCXO boards. SetTx can do
+        // this transition internally, but making it explicit gives the PLL a
+        // clean lock point and avoids the repeated TX-timeout-only IRQ pattern
+        // seen on the Bifrost Wio-SX1262 prototype.
+        if self.config.use_tcxo {
+            self.device.set_fs().map_err(|_| MeshRadioError::DeviceIo)?;
+            wait_busy_timeout(
+                &mut self.device,
+                &mut self.clock,
+                RADIO_LONG_BUSY_TIMEOUT_MS,
+            )
+            .await?;
+        }
+
+        // Start transmission with a timeout long enough for the configured
+        // SF/BW/payload. A fixed 6s SX1262 timeout aborts long MeshCore
+        // adverts at SF12/BW62 before the packet can finish.
         self.device
-            .set_tx(RxTxTimeout::from_ms(TX_TIMEOUT_MS))
+            .set_tx(RxTxTimeout::from_ms(tx_timeout_ms))
             .map_err(|_| MeshRadioError::DeviceIo)?;
 
         // Wait for completion (non-blocking yield)
         let start_ms = self.clock.now_ms();
+        let first_poll_delay_ms = minimum_tx_elapsed_ms(estimated_airtime_ms)
+            .min(u64::from(tx_timeout_ms))
+            .min(u64::from(u32::MAX)) as u32;
+        if first_poll_delay_ms > 0 {
+            self.clock.delay_ms(first_poll_delay_ms);
+        }
         loop {
             let irq = self
                 .device
                 .get_irq_status()
                 .map_err(|_| MeshRadioError::DeviceIo)?;
 
+            // A TX success must be a clean TxDone-only word. Corrupted
+            // reads are sampled again until a clean terminal IRQ or the
+            // software timeout; clearing here can erase a real TxDone
+            // before a stable read gets through on a noisy prototype bus.
+            let raw = irq.raw();
+            let elapsed_ms = self.clock.now_ms().saturating_sub(start_ms);
+            self.last_tx_irq_raw = raw;
+            if raw & 0xFC00 != 0 {
+                self.tx_irq_error = self.tx_irq_error.wrapping_add(1);
+                self.clock.delay_ms(TX_POLL_INTERVAL_MS as u32);
+                if elapsed_ms > soft_timeout_ms {
+                    self.tx_timeout = self.tx_timeout.wrapping_add(1);
+                    log::warn!("LORA TX timeout (corrupt-only irqs, last raw={:?})", irq,);
+                    return Err(MeshRadioError::TxTimeout);
+                }
+                continue;
+            }
             if irq.tx_done() {
-                let tx_ms = self.clock.now_ms().saturating_sub(start_ms) as u32;
-                log::debug!("LORA TX done: {} bytes in {}ms", payload.len(), tx_ms);
+                if !tx_elapsed_after_minimum(estimated_airtime_ms, elapsed_ms) {
+                    self.tx_irq_error = self.tx_irq_error.wrapping_add(1);
+                    self.clock.delay_ms(TX_POLL_INTERVAL_MS as u32);
+                    if elapsed_ms > soft_timeout_ms {
+                        self.tx_timeout = self.tx_timeout.wrapping_add(1);
+                        log::warn!("LORA TX timeout (early txdone irq)");
+                        return Err(MeshRadioError::TxTimeout);
+                    }
+                    continue;
+                }
+                let tx_ms = elapsed_ms as u32;
+                if raw != IRQ_TX_DONE_ONLY {
+                    self.tx_irq_error = self.tx_irq_error.wrapping_add(1);
+                    log::warn!(
+                        "LORA TX done with extra IRQ bits raw=0x{:04X} after {}ms",
+                        raw,
+                        elapsed_ms
+                    );
+                } else {
+                    log::debug!("LORA TX done: {} bytes in {}ms", payload.len(), tx_ms);
+                }
                 if self.device.clear_irq_status(IrqMask::all()).is_err() {
                     self.tx_irq_error = self.tx_irq_error.wrapping_add(1);
                 }
                 return Ok(tx_ms);
             }
             if irq.timeout() {
+                if !tx_elapsed_after_minimum(estimated_airtime_ms, elapsed_ms)
+                    && elapsed_ms <= soft_timeout_ms
+                {
+                    self.tx_irq_error = self.tx_irq_error.wrapping_add(1);
+                    self.clock.delay_ms(TX_POLL_INTERVAL_MS as u32);
+                    continue;
+                }
                 self.tx_timeout = self.tx_timeout.wrapping_add(1);
-                log::warn!(
-                    "LORA TX timeout (IRQ) after {}ms",
-                    self.clock.now_ms().saturating_sub(start_ms)
-                );
+                log::warn!("LORA TX timeout (IRQ) after {}ms", elapsed_ms);
                 return Err(MeshRadioError::TxTimeout);
             }
-            if self.clock.now_ms().saturating_sub(start_ms) > TX_SOFT_TIMEOUT_MS {
+            if raw & (IRQ_TX_DONE_ONLY | IRQ_NON_TX_BITS) != 0 {
+                self.tx_irq_error = self.tx_irq_error.wrapping_add(1);
+                self.clock.delay_ms(TX_POLL_INTERVAL_MS as u32);
+                if elapsed_ms > soft_timeout_ms {
+                    self.tx_timeout = self.tx_timeout.wrapping_add(1);
+                    log::warn!("LORA TX timeout (invalid tx irq raw=0x{:04X})", raw);
+                    return Err(MeshRadioError::TxTimeout);
+                }
+                continue;
+            }
+            if elapsed_ms > soft_timeout_ms {
                 self.tx_timeout = self.tx_timeout.wrapping_add(1);
-                log::warn!("LORA TX timeout (soft) after {}ms", TX_SOFT_TIMEOUT_MS);
+                log::warn!("LORA TX timeout (soft) after {}ms", soft_timeout_ms);
                 return Err(MeshRadioError::TxTimeout);
             }
             self.clock.delay_ms(TX_POLL_INTERVAL_MS as u32);
@@ -790,6 +957,14 @@ where
     ) -> Result<MeshRadioTxStatus, MeshRadioError>
     {
         let payload = frame.payload_slice();
+        self.transmit_payload(payload).await
+    }
+
+    async fn transmit_payload(
+        &mut self,
+        payload: &[u8],
+    ) -> Result<MeshRadioTxStatus, MeshRadioError>
+    {
         if payload.is_empty() || payload.len() > MAX_LORA_PAYLOAD_LEN {
             return Err(MeshRadioError::InvalidPayload);
         }
@@ -800,15 +975,20 @@ where
         with_radio_host(|host| (host.set_lora_tx_active)(true));
 
         self.rf_switch.set_tx()?;
+        self.clock.delay_ms(2);
 
         // 2. Put radio in Standby before configuring for TX
         self.device
-            .set_standby(StandbyConfig::StbyRc)
+            .set_standby(if self.config.use_tcxo {
+                StandbyConfig::StbyXOSC
+            } else {
+                StandbyConfig::StbyRc
+            })
             .map_err(|_| MeshRadioError::DeviceIo)?;
         wait_busy_timeout(
             &mut self.device,
             &mut self.clock,
-            RADIO_SHORT_BUSY_TIMEOUT_MS,
+            RADIO_LONG_BUSY_TIMEOUT_MS,
         )
         .await?;
 
@@ -857,6 +1037,66 @@ where
         rx_restore_res?;
 
         Ok(MeshRadioTxStatus::Sent)
+    }
+}
+
+fn tx_elapsed_after_minimum(estimated_airtime_ms: u32, elapsed_ms: u64) -> bool
+{
+    elapsed_ms >= minimum_tx_elapsed_ms(estimated_airtime_ms)
+}
+
+fn minimum_tx_elapsed_ms(estimated_airtime_ms: u32) -> u64
+{
+    let estimated = u64::from(estimated_airtime_ms.max(1));
+    estimated.saturating_mul(3) / 4
+}
+
+fn estimate_lora_airtime_ms(config: &MeshRadioConfig, payload_len: usize) -> u32
+{
+    let sf = config.spread_factor as u32;
+    let bw_hz = lora_bandwidth_hz(config.bandwidth);
+    let symbol_us = ((1_u64 << sf) * 1_000_000).div_ceil(u64::from(bw_hz));
+    let low_data_rate_opt = symbol_us > 16_380;
+    let de = u32::from(low_data_rate_opt);
+    let cr = lora_coding_rate_index(config.coding_rate);
+    let denominator = 4 * (sf.saturating_sub(2 * de)).max(1);
+    let numerator = (8_i32 * payload_len as i32) - (4_i32 * sf as i32) + 28 + 16;
+    let payload_symbols = if numerator <= 0 {
+        8
+    } else {
+        8 + (numerator as u32).div_ceil(denominator) * (cr + 4)
+    };
+    let total_symbols_x100 = u64::from(config.preamble_len)
+        .saturating_mul(100)
+        .saturating_add(425)
+        .saturating_add(u64::from(payload_symbols).saturating_mul(100));
+    let airtime_us = total_symbols_x100.saturating_mul(symbol_us).div_ceil(100);
+    airtime_us.div_ceil(1_000).min(u64::from(u32::MAX)) as u32
+}
+
+fn lora_bandwidth_hz(bandwidth: LoRaBandWidth) -> u32
+{
+    match bandwidth {
+        LoRaBandWidth::BW7 => 7_810,
+        LoRaBandWidth::BW10 => 10_420,
+        LoRaBandWidth::BW15 => 15_630,
+        LoRaBandWidth::BW20 => 20_830,
+        LoRaBandWidth::BW31 => 31_250,
+        LoRaBandWidth::BW41 => 41_670,
+        LoRaBandWidth::BW62 => 62_500,
+        LoRaBandWidth::BW125 => 125_000,
+        LoRaBandWidth::BW250 => 250_000,
+        LoRaBandWidth::BW500 => 500_000,
+    }
+}
+
+fn lora_coding_rate_index(coding_rate: LoraCodingRate) -> u32
+{
+    match coding_rate {
+        LoraCodingRate::CR4_5 => 1,
+        LoraCodingRate::CR4_6 => 2,
+        LoraCodingRate::CR4_7 => 3,
+        LoraCodingRate::CR4_8 => 4,
     }
 }
 

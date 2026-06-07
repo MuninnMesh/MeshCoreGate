@@ -18,6 +18,9 @@
     "default_interval_secs": 600,
     "jitter_secs": 10
   },
+  "time": {
+    "utc_offset_minutes": -360
+  },
   "radio": {
     "frequency_hz": 910525000,
     "bandwidth_hz": 62500,

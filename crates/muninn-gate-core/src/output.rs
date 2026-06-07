@@ -368,6 +368,7 @@ fn write_metrics_json<const OUT: usize>(
     write_optional_f32(out, "humidity_percent", metrics.humidity_percent)?;
     write_optional_f32(out, "pressure_pa", metrics.pressure_pa)?;
     write_optional_f32(out, "gas_resistance_ohms", metrics.gas_resistance_ohms)?;
+    write_optional_f32(out, "luminosity_lux", metrics.luminosity_lux)?;
     Ok(())
 }
 

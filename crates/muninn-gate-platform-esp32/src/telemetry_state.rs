@@ -29,6 +29,49 @@ pub const ESP32_TELEMETRY_PRODUCER_LIMIT: usize = MAX_TELEMETRY_PRODUCERS;
 static TELEMETRY_STORE: Mutex<RefCell<FixedTelemetryStore<ESP32_TELEMETRY_PRODUCER_LIMIT>>> =
     Mutex::new(RefCell::new(FixedTelemetryStore::new()));
 
+/// Per-producer timestamp (gateway ms) of the last GET_STATUS poll attempt, used
+/// to throttle status polling to a slower cadence than telemetry.
+static STATUS_POLL_LAST_MS: Mutex<
+    RefCell<[Option<(TelemetryProducerId, u64)>; ESP32_TELEMETRY_PRODUCER_LIMIT]>,
+> = Mutex::new(RefCell::new([None; ESP32_TELEMETRY_PRODUCER_LIMIT]));
+
+/// Returns true when a GET_STATUS poll is due for `producer_id` (at least
+/// `interval_ms` elapsed since the last attempt, or it was never polled).
+pub fn status_poll_due(producer_id: TelemetryProducerId, now_ms: u64, interval_ms: u64) -> bool
+{
+    critical_section::with(|cs| {
+        let slots = STATUS_POLL_LAST_MS.borrow_ref(cs);
+        for slot in slots.iter().flatten() {
+            if slot.0 == producer_id {
+                return now_ms.saturating_sub(slot.1) >= interval_ms;
+            }
+        }
+        true
+    })
+}
+
+/// Record a GET_STATUS poll attempt for `producer_id` at `now_ms`.
+pub fn mark_status_polled(producer_id: TelemetryProducerId, now_ms: u64)
+{
+    critical_section::with(|cs| {
+        let mut slots = STATUS_POLL_LAST_MS.borrow_ref_mut(cs);
+        for slot in slots.iter_mut() {
+            if let Some(entry) = slot {
+                if entry.0 == producer_id {
+                    entry.1 = now_ms;
+                    return;
+                }
+            }
+        }
+        for slot in slots.iter_mut() {
+            if slot.is_none() {
+                *slot = Some((producer_id, now_ms));
+                return;
+            }
+        }
+    })
+}
+
 /// Shared telemetry store adapter used by the scheduler runtime.
 #[derive(Debug, Default)]
 pub struct SharedTelemetryStore;

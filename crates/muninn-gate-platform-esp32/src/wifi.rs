@@ -31,9 +31,8 @@ use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
 use esp_hal::delay::Delay;
-use esp_wifi::config::PowerSaveMode;
 use esp_wifi::wifi::event::{EventExt as _, StaDisconnected};
-use esp_wifi::wifi::{AuthMethod, ClientConfiguration, Configuration, ScanConfig, WifiDevice};
+use esp_wifi::wifi::{AuthMethod, ClientConfiguration, Configuration, WifiDevice};
 use muninn_gate_core::config::MAX_TELEMETRY_PRODUCERS;
 use muninn_gate_core::{
     Clock,
@@ -58,7 +57,7 @@ use smoltcp::iface::{
 };
 use smoltcp::socket::{dhcpv4, tcp};
 use smoltcp::time::{Duration as SmoltcpDuration, Instant as SmoltcpInstant};
-use smoltcp::wire::{EthernetAddress, HardwareAddress, IpCidr};
+use smoltcp::wire::{DhcpOption, EthernetAddress, HardwareAddress, IpCidr};
 use static_cell::StaticCell;
 
 use crate::display::LocalDisplay;
@@ -106,8 +105,6 @@ pub const SMOLTCP_POLL_GAP_WARN_MS: u32 = 25;
 pub const SMOLTCP_POLL_GAP_BAD_MS: u32 = 100;
 /// Minimum spacing between smoltcp poll-gap serial warnings.
 pub const SMOLTCP_POLL_GAP_LOG_COOLDOWN_MS: u32 = 30_000;
-/// Number of 10 ms polls allowed while waiting for WiFi start state.
-pub const WIFI_START_STATE_POLLS: usize = 200;
 /// Milliseconds between HTTP socket-pool metric updates.
 pub const HTTP_SOCKET_STATE_REPORT_MS: u64 = 1_000;
 /// HTTP idle window after which a previously-used endpoint is considered wedged.
@@ -126,8 +123,6 @@ pub const MAIN_LOOP_GAP_DIAGNOSTIC_MS: u32 = 5_000;
 pub const SCHEDULER_TICK_DIAGNOSTIC_MS: u32 = 5_000;
 /// Minimum spacing between repeated long-loop diagnostics.
 pub const LONG_LOOP_DIAGNOSTIC_COOLDOWN_MS: u64 = 60_000;
-/// ESP WiFi TX power request, in 0.25 dBm units. The driver may clamp it.
-pub const WIFI_TX_POWER_QUARTER_DBM: i8 = 80;
 
 type HttpTcpRxBuffers = [[u8; HTTP_TCP_RX_BUFFER_BYTES]; HTTP_SOCKET_COUNT];
 type HttpTcpTxBuffers = [[u8; HTTP_TCP_TX_BUFFER_BYTES]; HTTP_SOCKET_COUNT];
@@ -137,6 +132,9 @@ type HttpSocketActivity = [Option<u64>; HTTP_SOCKET_COUNT];
 static HTTP_TCP_RX_BUFFERS: StaticCell<HttpTcpRxBuffers> = StaticCell::new();
 static HTTP_TCP_TX_BUFFERS: StaticCell<HttpTcpTxBuffers> = StaticCell::new();
 static HTTP_REQUEST_BUFFERS: StaticCell<HttpRequestBuffers> = StaticCell::new();
+static DHCP_HOSTNAME: StaticCell<[u8; crate::wifi_common::DHCP_HOSTNAME_MAX_LEN]> =
+    StaticCell::new();
+static DHCP_OPTIONS: StaticCell<[DhcpOption<'static>; 1]> = StaticCell::new();
 static WIFI_DISCONNECT_EVENTS: AtomicU32 = AtomicU32::new(0);
 static WIFI_LAST_DISCONNECT_REASON: AtomicU8 = AtomicU8::new(0);
 static SMOLTCP_LAST_POLL_MS: AtomicU32 = AtomicU32::new(0);
@@ -635,11 +633,14 @@ where
     let mut socket_storage = [SocketStorage::EMPTY; HTTP_SOCKET_COUNT + 1];
     let mut sockets = SocketSet::new(&mut socket_storage[..]);
     let mut dhcp_socket = dhcpv4::Socket::new();
-    let mut retry_config = dhcp_socket.get_retry_config();
-    retry_config.discover_timeout = SmoltcpDuration::from_secs(2);
-    retry_config.initial_request_timeout = SmoltcpDuration::from_secs(2);
-    retry_config.request_retries = 3;
-    dhcp_socket.set_retry_config(retry_config);
+    crate::wifi_common::configure_dhcp_retry(&mut dhcp_socket);
+    let dhcp_hostname = crate::wifi_common::configure_dhcp_hostname(
+        &mut dhcp_socket,
+        config.name.as_str(),
+        &DHCP_HOSTNAME,
+        &DHCP_OPTIONS,
+    );
+    esp_println::println!("WiFi: DHCP hostname=\"{}\"", dhcp_hostname);
     let dhcp_handle = sockets.add(dhcp_socket);
     let mut http_handles = [None; HTTP_SOCKET_COUNT];
     for (index, (rx_buffer, tx_buffer)) in tcp_rx_buffers
@@ -1688,6 +1689,13 @@ where
             channel.channel_id,
             channel.metrics.gas_resistance_ohms,
         )?;
+        write_optional_channel_metric(
+            writer,
+            "muninn_gate_node_channel_luminosity_lux",
+            record,
+            channel.channel_id,
+            channel.metrics.luminosity_lux,
+        )?;
     }
 
     Ok(())
@@ -1779,53 +1787,15 @@ fn station_config_pinned_to_best_ap(
 ) -> Option<ClientConfiguration>
 {
     let ssid = station_config.ssid.as_str();
-    let scan_config = ScanConfig {
-        ssid: Some(ssid),
-        ..Default::default()
-    };
-    let aps = match controller.scan_with_config_sync_max(scan_config, 12) {
-        Ok(aps) => aps,
-        Err(error) => {
-            esp_println::println!("WiFi: AP scan failed before connect: {:?}", error);
-            record_diagnostic(
-                platform.now_ms(),
-                DiagnosticLevel::Warn,
-                DiagnosticSubsystem::Wifi,
-                "ap_scan_failed",
-                "WiFi AP scan failed; falling back to unpinned connect",
-            );
-            return None;
-        },
-    };
-
-    esp_println::println!("WiFi: scan ssid=\"{}\" candidates={}", ssid, aps.len());
-
-    let mut selected = None;
-    let mut selected_rssi = i8::MIN;
-    let mut selected_channel = 0_u8;
-    for ap in aps.iter().filter(|ap| ap.ssid.as_str() == ssid) {
-        esp_println::println!(
-            "WiFi: candidate bssid={:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x} channel={} rssi={} \
-             auth={:?}",
-            ap.bssid[0],
-            ap.bssid[1],
-            ap.bssid[2],
-            ap.bssid[3],
-            ap.bssid[4],
-            ap.bssid[5],
-            ap.channel,
-            ap.signal_strength,
-            ap.auth_method,
-        );
-        if ap.signal_strength > selected_rssi {
-            selected = Some(ap.bssid);
-            selected_rssi = ap.signal_strength;
-            selected_channel = ap.channel;
-        }
-    }
-
-    let Some(bssid) = selected else {
-        esp_println::println!("WiFi: no scan result matched configured SSID");
+    let Some(pin) = crate::wifi_common::scan_strongest_bssid(
+        controller,
+        ssid,
+        crate::wifi_common::SCAN_PIN_RESULTS,
+    ) else {
+        // `scan_strongest_bssid` already logged the scan / no-match
+        // reason — translate to the Heltec diagnostics ring here so
+        // the operator can grep for it the same way as before.
+        esp_println::println!("WiFi: no scan result matched configured SSID \"{}\"", ssid);
         record_diagnostic(
             platform.now_ms(),
             DiagnosticLevel::Warn,
@@ -1838,14 +1808,14 @@ fn station_config_pinned_to_best_ap(
 
     esp_println::println!(
         "WiFi: pinning AP bssid={:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x} channel={} rssi={}",
-        bssid[0],
-        bssid[1],
-        bssid[2],
-        bssid[3],
-        bssid[4],
-        bssid[5],
-        selected_channel,
-        selected_rssi,
+        pin.bssid[0],
+        pin.bssid[1],
+        pin.bssid[2],
+        pin.bssid[3],
+        pin.bssid[4],
+        pin.bssid[5],
+        pin.channel,
+        pin.rssi,
     );
     record_diagnostic(
         platform.now_ms(),
@@ -1856,8 +1826,8 @@ fn station_config_pinned_to_best_ap(
     );
 
     let mut pinned = station_config.clone();
-    pinned.bssid = Some(bssid);
-    pinned.channel = Some(selected_channel);
+    pinned.bssid = Some(pin.bssid);
+    pinned.channel = Some(pin.channel);
     Some(pinned)
 }
 
@@ -2022,18 +1992,15 @@ fn poll_elapsed_seconds(polls: usize, poll_ms: u32) -> u64
 
 fn wait_for_wifi_started(
     controller: &esp_wifi::wifi::WifiController<'_>,
-    delay: &Delay,
+    _delay: &Delay,
 ) -> Result<(), WifiStartError>
 {
-    for _ in 0..WIFI_START_STATE_POLLS {
-        if matches!(controller.is_started(), Ok(true)) {
-            return Ok(());
-        }
-        delay.delay_millis(10);
+    if crate::wifi_common::wait_for_started(controller) {
+        Ok(())
+    } else {
+        esp_println::println!("WiFi: start state did not become ready");
+        Err(WifiStartError::Controller)
     }
-
-    esp_println::println!("WiFi: start state did not become ready");
-    Err(WifiStartError::Controller)
 }
 
 fn configure_wifi_reliability(
@@ -2041,7 +2008,7 @@ fn configure_wifi_reliability(
     platform: &Esp32Platform,
 ) -> Result<(), WifiStartError>
 {
-    if let Err(error) = controller.set_power_saving(PowerSaveMode::None) {
+    if let Err(error) = crate::wifi_common::disable_power_save(controller) {
         esp_println::println!("WiFi: disable power save failed: {:?}", error);
         record_diagnostic(
             platform.now_ms(),
@@ -2053,36 +2020,44 @@ fn configure_wifi_reliability(
         return Err(WifiStartError::Controller);
     }
 
-    let result =
-        unsafe { esp_wifi_sys::include::esp_wifi_set_max_tx_power(WIFI_TX_POWER_QUARTER_DBM) };
-    if result != 0 {
-        esp_println::println!("WiFi: set max TX power failed: {}", result);
-        record_diagnostic(
-            platform.now_ms(),
-            DiagnosticLevel::Warn,
-            DiagnosticSubsystem::Wifi,
-            "tx_power_failed",
-            "failed to set WiFi max TX power",
-        );
-        return Err(WifiStartError::Controller);
-    }
-
-    let mut applied = 0_i8;
-    let result = unsafe { esp_wifi_sys::include::esp_wifi_get_max_tx_power(&mut applied) };
-    if result == 0 {
-        crate::telemetry_state::record_wifi_tx_power(WIFI_TX_POWER_QUARTER_DBM, applied);
-        esp_println::println!(
-            "WiFi: TX power cap requested={} applied={} (0.25 dBm units)",
-            WIFI_TX_POWER_QUARTER_DBM,
-            applied,
-        );
-        record_diagnostic(
-            platform.now_ms(),
-            DiagnosticLevel::Info,
-            DiagnosticSubsystem::Wifi,
-            "tx_power_cap",
-            "WiFi TX power cap requested",
-        );
+    match crate::wifi_common::set_max_tx_power() {
+        crate::wifi_common::SetTxPowerResult::Applied(applied) => {
+            crate::telemetry_state::record_wifi_tx_power(
+                crate::wifi_common::TX_POWER_QUARTER_DBM,
+                applied,
+            );
+            esp_println::println!(
+                "WiFi: TX power cap requested={} applied={} (0.25 dBm units)",
+                crate::wifi_common::TX_POWER_QUARTER_DBM,
+                applied,
+            );
+            record_diagnostic(
+                platform.now_ms(),
+                DiagnosticLevel::Info,
+                DiagnosticSubsystem::Wifi,
+                "tx_power_cap",
+                "WiFi TX power cap requested",
+            );
+        },
+        crate::wifi_common::SetTxPowerResult::SetFailed(rc) => {
+            esp_println::println!("WiFi: set max TX power failed: {}", rc);
+            record_diagnostic(
+                platform.now_ms(),
+                DiagnosticLevel::Warn,
+                DiagnosticSubsystem::Wifi,
+                "tx_power_failed",
+                "failed to set WiFi max TX power",
+            );
+            return Err(WifiStartError::Controller);
+        },
+        crate::wifi_common::SetTxPowerResult::GetFailed => {
+            // The cap took effect but readback failed; surface as info
+            // since the chip is still in the desired state.
+            esp_println::println!(
+                "WiFi: TX power cap requested={} (readback failed)",
+                crate::wifi_common::TX_POWER_QUARTER_DBM,
+            );
+        },
     }
 
     Ok(())

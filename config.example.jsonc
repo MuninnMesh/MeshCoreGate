@@ -13,13 +13,17 @@
 
   "display": { // Local display behavior.
     "enabled": true, // Set false to disable display output.
-    "node_display": "temperature", // temperature, humidity, soc, battery_voltage, pressure, rssi, or latency.
+    "node_display": "temperature", // temperature, humidity, soc, battery_voltage, pressure, luminosity, rssi, or latency.
     "brightness_percent": 60 // OLED brightness from 0 to 100.
   },
 
   "polling": { // Polling intervals are seconds.
     "default_interval_secs": 600, // Default producer poll interval; 600s is 10 minutes.
     "jitter_secs": 10 // Deterministic per-producer jitter window.
+  },
+
+  "time": { // Optional wall-clock display settings.
+    "utc_offset_minutes": -360 // Fixed local display offset from UTC; CST is -360.
   },
 
   "radio": { // LoRa radio settings for the selected board/region.

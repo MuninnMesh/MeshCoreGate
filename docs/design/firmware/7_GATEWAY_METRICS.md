@@ -278,6 +278,7 @@ sensor readings. It is a practical superset for the expected producer classes:
   producer-side air-quality values.
 - BMP280: temperature and pressure.
 - SHT3x/SHT4x: temperature and humidity.
+- TSL2591: luminosity in lux.
 - GPS receivers: latitude, longitude, altitude, speed, heading, HDOP,
   satellites, and fix type.
 - IMUs: acceleration, angular velocity, magnetic field, and attitude angles.
@@ -296,6 +297,7 @@ added `channel` label:
 - `muninn_gate_node_channel_battery_voltage{node="power_board",channel="1"}`
 - `muninn_gate_node_channel_battery_voltage{node="power_board",channel="2"}`
 - `muninn_gate_node_channel_battery_voltage{node="power_board",channel="3"}`
+- `muninn_gate_node_channel_luminosity_lux{node="deck",channel="0"}`
 
 Serial JSON emits every populated `TelemetryMetrics` field at the producer
 level and, when channel data is present, adds a `channels` array with the same

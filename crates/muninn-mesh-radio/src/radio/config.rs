@@ -15,7 +15,7 @@ use muninn_mesh_sx126x::op::packet::{
     PacketType,
 };
 use muninn_mesh_sx126x::op::rxtx::{DeviceSel, PaConfig, TxParams};
-use muninn_mesh_sx126x::op::tcxo::{TcxoDelay, TcxoVoltage};
+use muninn_mesh_sx126x::op::tcxo::TcxoDelay;
 
 use super::host::with_radio_host;
 use super::types::{MAX_LORA_PAYLOAD_LEN, MeshRadioConfig};
@@ -107,10 +107,7 @@ pub fn build_lora_config(config: MeshRadioConfig) -> SxConfig
         rf_freq,
         rf_frequency: config.freq_hz,
         tcxo_opts: if config.use_tcxo {
-            Some((
-                TcxoVoltage::Volt1_8,
-                TcxoDelay::from_ms(config.tcxo_delayms),
-            ))
+            Some((config.tcxo_voltage, TcxoDelay::from_ms(config.tcxo_delayms)))
         } else {
             None
         },

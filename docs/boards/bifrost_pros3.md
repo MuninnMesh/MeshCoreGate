@@ -1,10 +1,18 @@
-# Bifrost Gate — ProS3 + SSD1327 + (future) E22P-915M30S
+# Bifrost Gate — ProS3 + SSD1327 + Seeed Wio-SX1262
 
 Bifrost Gate is a Muninn Gate target built from an Unexpected Maker
 **ProS3 / ProS3[D]** (ESP32-S3-WROOM-1 N16R8, 16 MB flash, 8 MB PSRAM), an
 Adafruit **SSD1327** 1.5 inch 128×128 4-bit grayscale I2C OLED, and a
-future EBYTE **E22P-915M30S** LoRa module (SX1262 + integrated PA/LNA, 915
-MHz, 30 dBm peak).
+**Seeed Studio Wio-SX1262** 915 MHz LoRa module (Semtech SX1262 + on-module
+TCXO + RF switch + u.FL antenna, ~22 dBm peak conducted output).
+
+> **Radio history**: the original plan called for an EBYTE
+> **E22P-915M30S** (SX1262 + integrated PA at 30 dBm). We swapped to the
+> Seeed Wio-SX1262 to simplify the supply path (no high-current buck) and
+> trade peak TX power for a smaller footprint + single 3V3 rail. The chip
+> is the same SX1262; the host-side interface (SPI + BUSY + DIO1 + RESET)
+> is unchanged. The change frees up `RXEN`/`TXEN` (the on-module RF
+> switch is driven internally via the SX1262's `DIO2`).
 
 > **Display history**: the original plan called for an Adafruit 1673 SSD1351
 > 128×96 color OLED over SPI. While we wait on the EYESPI cable, the
@@ -13,9 +21,11 @@ MHz, 30 dBm peak).
 > `DisplayVariant::Oled128x96Color` variant remains in core for future
 > revival.
 
-The current firmware milestone is **USB logging + I2C OLED UI + WiFi
-station scan-only + battery telemetry + RGB status LED**. The E22P module
-is not soldered yet — LoRa runtime is intentionally disabled.
+The current firmware milestone is **USB provisioning + flash-persistent
+config + WiFi association + DHCP + animated UI + RGB phase indicator**.
+The LoRa runtime is gated on `ui_state.lora_available` flipping `true`
+once the SX1262 driver lands; until then the status LED blinks fast red
+once WiFi reaches Online (= "radio not wired" critical state).
 
 ## Firmware Wiring
 
@@ -27,8 +37,9 @@ is not soldered yet — LoRa runtime is intentionally disabled.
 - Flash layout: 16 MB QSPI, default `partitions.csv` (reuses Heltec layout)
 - PSRAM: 8 MB QSPI PSRAM on-board; **not** enabled in this runner yet
 - Output interfaces: USB Serial/JTAG (native, `303a:1001` after first flash),
-  SSD1327 grayscale OLED, esp-wifi STA (scan-only at this milestone)
-- LoRa: E22P-915M30S placeholder; pins documented, runtime not started
+  SSD1327 grayscale OLED, esp-wifi STA (associate + DHCP)
+- LoRa: Seeed Wio-SX1262 — pinout documented below; driver bring-up in
+  progress (`bifrost_pros3/lora.rs`)
 
 ## References
 
@@ -37,7 +48,9 @@ is not soldered yet — LoRa runtime is intentionally disabled.
 - Unexpected Maker pinout cards: <https://help.unexpectedmaker.com/docs/documentation/pinout-cards/>
 - Adafruit SSD1327 product page: <https://www.adafruit.com/product/4741>
 - Adafruit SSD1351 product page (paused): <https://www.adafruit.com/product/1673>
-- E22P-915M30S product page: <https://www.ebyte.com/product/2617.html>
+- Seeed Wio-SX1262 wiki: <https://wiki.seeedstudio.com/wio_sx1262_xiao_esp32s3_kit/>
+- Semtech SX1262 datasheet: <https://www.semtech.com/products/wireless-rf/lora-connect/sx1262>
+- E22P-915M30S product page (paused / superseded): <https://www.ebyte.com/product/2617.html>
 - Reference firmware for ProS3[D]: `/run/media/vz/Code/mesh/apps/polygon-pros3d/`
 
 ## Board Inventory
@@ -69,14 +82,16 @@ is not soldered yet — LoRa runtime is intentionally disabled.
 - No backlight — OLED pixels emit directly. Mind burn-in: keep brightness
   conservative and let the panel idle off when not actively displaying.
 
-### EBYTE E22P-915M30S (future)
+### Seeed Studio Wio-SX1262
 
-- SX1262-based 915 MHz LoRa module with integrated PA/LNA/FEM.
-- Max conducted TX 30 dBm (~650 mA peak at 30 dBm).
-- 32 MHz TCXO on-module.
-- SPI control + BUSY/DIO1/NRST. FEM typically driven internally via SX1262
-  DIO2; RXEN/TXEN pads usually NC.
-- Module footprint ~38.5 × 24 mm.
+- Semtech SX1262 LoRa transceiver, 915 MHz ISM band.
+- ~22 dBm peak conducted TX (~120 mA peak draw on 3V3). No external PA.
+- On-module 32 MHz TCXO; chip drives TCXO power via internal `DIO3`.
+- On-module RF switch driven by the chip's internal `DIO2` — no host
+  TXEN/RXEN required.
+- Host interface: SPI (MOSI, MISO, SCK, NSS) + `BUSY` + `DIO1` + active-low
+  `RESET`. 7 signals, single 3V3 rail.
+- u.FL / IPEX MHF1 antenna connector on-module.
 
 ## Pin Plan
 
@@ -93,6 +108,8 @@ working `mesh/apps/polygon-pros3d` reference firmware.
 | I2C SCL | 9 | STEMMA QT |
 | VBAT sense | 10 | ADC, on-board 1:3 divider |
 | VBUS sense | 33 | HIGH when USB 5 V present |
+| Poll button | 15 | Active-low input; wire momentary button to GND |
+| Active buzzer | 16 | Output; active module IO pin. Module VCC=3V3, GND=GND |
 | LDO2 enable | 17 | Drive HIGH to power STEMMA QT + RGB LED |
 | WS2812 RGB | 18 | RMT channel 0, 80 MHz source, divider=1 (12.5 ns/tick) |
 | Antenna RF switch | 11 | ProS3[D] only. LOW = onboard 3D, HIGH = external u.FL |
@@ -107,40 +124,63 @@ working `mesh/apps/polygon-pros3d` reference firmware.
 | GND | GND | |
 | Address | `0x3D` | Solder jumper moves it to `0x3C` |
 
-### Future E22P-915M30S (peripheral, not soldered yet)
+### Seeed Wio-SX1262 (LoRa peripheral)
 
-| Signal | ProS3 GPIO | Notes |
-| --- | --- | --- |
-| SCK | 36 | Dedicated SPI2 bus (separate from I2C STEMMA) |
-| MOSI | 35 | SPI2 |
-| MISO | 37 | SPI2 |
-| NSS | 38 | Dedicated CS |
-| BUSY | 39 | Input |
-| DIO1 | 40 | IRQ input |
-| NRST | 41 | Driver-controlled |
-| RXEN | 42 | Only if E22P exposes external FEM control |
-| TXEN | 21 | Only if E22P exposes external FEM control |
-| VCC | see "Power notes" below | 3.3 V, 650 mA peak at 30 dBm |
-| GND | GND | Thick traces / multiple pads for current return |
-| ANT | external SMA / stamp-hole | **Install antenna BEFORE first TX** |
+The control signals are routed through the GPIO matrix to free pins — the
+SX1262 maxes out at 16 MHz SPI, so the GPIO-matrix routing penalty (vs.
+SPI2 IOMUX) is irrelevant.
 
-Free GPIOs still available: 1, 2, 3, 6, 7, 12, 13, 15, 16, 43, 44. GPIO 3 is
-a strap; avoid for outputs that flip at boot. GPIO 43/44 are UART0 TX/RX —
-leave free for a fallback console.
+> **⚠️ Octal-PSRAM pin conflict (root cause of a multi-day bring-up
+> failure):** the original plan put SPI2 on **GPIO 35/36/37**. The ProS3
+> is an **ESP32-S3-WROOM-1 N16R8** — the **R8 = 8 MB *octal* PSRAM**,
+> which is bonded inside the module package to **GPIO 33–37**
+> (SPIIO4–SPIIO7 + SPIDQS). Those pins are **not usable as general I/O**
+> even with PSRAM disabled in firmware — the PSRAM die loads/contends the
+> nets, giving intermittent-then-dead SPI (reads return `0x00`/`0xFF`,
+> writes silently dropped). SCK/MOSI/MISO were moved to **GPIO 12/13/14**
+> (confirmed-free). NSS/BUSY/DIO1/RESET (38/39/40/41) and RF_SW (21) were
+> never affected — none are PSRAM pins.
 
-### Power notes for E22P
+| Signal | ProS3 GPIO | Direction | Notes |
+| --- | --- | --- | --- |
+| SCK | 12 | output | SPI2 SCK (was 36 — octal-PSRAM pin, unusable) |
+| MOSI | 14 | output | SPI2 MOSI (was 35 — octal-PSRAM pin, unusable) |
+| MISO | 13 | input  | SPI2 MISO (was 37 — octal-PSRAM pin, unusable) |
+| NSS | 38 | output | active-low CS |
+| BUSY | 39 | input | host MUST poll low before every SPI write |
+| DIO1 | 40 | input/IRQ | rising-edge IRQ (rx done / tx done / timeout) |
+| RESET | 41 | output | active-low; pulse ≥ 100 µs at boot |
+| RF_SW (module pin 1) | 21 | output | **must drive HIGH before reset** — gates on-module RF switch + TCXO supply; leaving it floating prevents the chip from completing boot calibration. Originally tried GPIO 34, but on the ProS3[D] revision GPIO 34 drives the on-board antenna mux and holding it HIGH kills WiFi association. |
+| VCC | 3V3 | power | ProS3 3V3 LDO, ≤ 200 mA budget (peak TX ~120 mA) |
+| GND | GND | ground | star-ground at module pad if possible |
+| ANT | u.FL → 915 MHz whip | RF | **install antenna BEFORE first TX** |
 
-ProS3 LDO1 is 700 mA and ProS3 itself draws ~200 mA in WiFi TX, so the
-3V3 rail cannot hold 30 dBm. Options, safest first:
+Free GPIOs after this allocation: 1, 2, 3, 6, 7, 42, 43, 44. GPIO 3 is a
+strap (avoid for outputs that toggle at boot); GPIO 43/44 are UART0 TX/RX
+(leave free as fallback console). On the ProS3[D] revision **avoid GPIO
+34** as a general output — it drives the on-board antenna mux.
 
-1. **Separate buck** from VBUS or VBAT feeding only E22P VCC (Adafruit 4711
-   or AP3429). **Recommended for any path that wants 30 dBm.**
-2. **Bulk decoupling**: 220 µF low-ESR cap as close to E22P VCC as
-   possible, plus 100 nF. Cap TX at ≤ 22 dBm in firmware.
-3. **Direct 3V3 + permanent 22 dBm cap**: cheapest, loses long-link gain.
+### Wiring notes
 
-Until option 1 is in place, firmware keeps `allow_high_power = false` and
-caps TX at ≤ 22 dBm.
+- **Bundle the SPI bus**: SCK / MOSI / MISO / NSS together. Run them as a
+  single 4-wire ribbon (or twisted set) ≤ 10 cm. Keep return-current paths
+  short — solder GND at both ends of the ribbon if the run is long.
+- **Module decoupling**: the Wio-SX1262 ships with its own on-board
+  decoupling (visible bulk + bypass caps on the silkscreen). No extra
+  caps required on the host side unless the VCC wire is unusually long
+  (>10 cm) and you observe rail droop under TX.
+- **`RF_SW` is mandatory**: the firmware drives GPIO 34 HIGH at probe
+  time. The chip needs `RF_SW` HIGH to power its TCXO; leaving the wire
+  off prevents boot calibration from completing and `BUSY` never drops.
+- **RESET pull-up**: optional — 10 kΩ from `RESET` to `3V3` so the host
+  never accidentally floats the line low and re-holds the chip in reset.
+- **DIO1 noise**: the line is an interrupt-driven input. If the ribbon
+  picks up SPI clock crosstalk, add a 22 pF cap from `DIO1` to `GND`
+  near the host — usually unnecessary at ≤ 10 cm.
+- **Antenna trace**: keep the u.FL→antenna run as short as possible.
+  Every extra 2-3 cm of unshielded coax at 915 MHz costs ~0.5 dB. A
+  hand-wired 50 Ω whip cut to ¼-wave (~8 cm) works for bench testing.
+  Don't TX into open air without an antenna — return loss can fry the PA.
 
 ## Firmware Architecture
 
@@ -150,20 +190,24 @@ hard-wired to the Heltec V4 GPIO / SX1262 / SSD1306 map). Code lives in
 
 ```
 bifrost_pros3/
-├── antenna.rs     — AntennaSwitch + AntennaPath
+├── antenna.rs     — AntennaSwitch + AntennaPath (WiFi RF mux on GPIO 11)
 ├── battery.rs     — Max17048 + BatterySample + BatteryError
 ├── board.rs       — BoardServices facade (owns every peripheral handle)
 ├── display.rs     — SSD1327 driver (Gray4 DrawTarget, 8 KiB framebuffer)
 ├── i2c_bus.rs     — Shared blocking I2C bus (RefCell + RefCellDevice)
+├── lora.rs        — Wio-SX1262 driver (SPI2 + GPIO + reset; in progress)
 ├── power.rs       — Ldo2Rail
-├── status_led.rs  — StatusLed + Rgb
+├── status_led.rs  — StatusLed + Rgb + LedDriver phase machine
 ├── ui.rs          — Public render() + Screen enum + luma + fonts
+├── ui/boot.rs     — Boot splash + Braille-default spinner pick
+├── ui/connecting.rs — Connecting / Acquiring-IP / Error body screens
 ├── ui/header.rs   — Header chrome (title + battery icon + WiFi bars)
-├── ui/provisioning.rs  — Current top-level screen
-├── ui/status.rs   — Forward-looking online status screen
-├── ui/wifi.rs     — Reusable AP-list renderer + dedicated scan screen
+├── ui/operational.rs — Online screen + LoRa-not-wired warning panel
+├── ui/provisioning.rs — Configuration-Required screen + AP list
+├── ui/spinner.rs  — Pluggable spinner pack (QR/Braille/Arc/etc.)
 ├── ui/state.rs    — UiState, NetworkPhase, WifiAp, AuthLabel
-└── wifi.rs        — WifiScanner (esp-wifi STA scan-only)
+├── ui/wifi.rs     — Reusable AP-list renderer + dedicated scan screen
+└── wifi.rs        — WifiScanner (associate + DHCP via smoltcp)
 ```
 
 `BoardServices::init()` consumes the HAL peripheral block once and produces
@@ -208,49 +252,58 @@ The ProS3 enumerates as `303a:80d4` from the CircuitPython factory image
 and switches to `303a:1001` (Espressif USB JTAG/serial debug unit) after
 our firmware is flashed.
 
-## Milestone 1 Runtime
+## Boot + Runtime Behaviour
 
-Boot behaviour on a populated board (OLED + battery + WiFi):
+Boot order on a populated board (OLED + optional battery + WiFi, LoRa
+in progress):
 
-1. `esp_hal::init` at max CPU clock; 70 KiB DRAM2 + 32 KiB DRAM internal
-   heap allocated to host esp-wifi DMA and the OLED framebuffer.
-2. **Antenna**: GPIO 11 driven HIGH (external u.FL).
+1. `esp_hal::init` at max CPU clock; heap allocated for esp-wifi DMA +
+   the OLED framebuffer.
+2. **Antenna**: GPIO 11 driven LOW (`Onboard3D`, currently required for
+   reliable WiFi association — external u.FL needs an antenna attached).
 3. **LDO2**: GPIO 17 driven HIGH; 50 ms rail settle.
-4. **Shared I2C bus**: I2C0 @ 400 kHz on GPIO 8 / GPIO 9, parked in a
+4. **Shared I2C bus**: I2C0 @ 800 kHz on GPIO 8 / GPIO 9, parked in a
    `'static RefCell`.
 5. **MAX17048**: quick-start sent (write `0x4000` to MODE), 1.5 s settle.
-6. **SSD1327**: init command sequence + `clear` to background.
-7. **RGB LED**: WS2812 via RMT, latched OFF.
-8. **WiFi scanner**: `esp-wifi` init → STA `Client(default)` →
-   `controller.start()`. No association attempted.
-9. USB banner printed; poll loop entered.
+6. **SSD1327**: init command sequence + clear to background.
+7. **RGB LED**: WS2812 via RMT, latched OFF; later driven by
+   `LedDriver::current_color(now_ms)`.
+8. **WiFi controller**: `esp-wifi` init → `set_configuration(default)`
+   → `start()` → `wait_for_started` → `disable_power_save` →
+   `set_max_tx_power(20 dBm)` (see [`wifi_common`](../../crates/muninn-gate-platform-esp32/src/wifi_common.rs)).
+9. **LoRa** (when driver lands): SPI2 init on GPIO 35–38, GPIO 41 pulse,
+   SX1262 version probe. On success, `ui_state.lora_available = true`
+   and the LED override flips from blinking RED to solid BLUE.
+10. **Stored config**: read `muninn_cfg` partition; if present, prefill
+    UI state with name/SSID/producers.
+11. USB banner printed.
+12. **Splash** (800 ms): "Booting…" headline + Braille spinner; RGB does
+    a one-shot RED → PURPLE → CYAN sweep (200 ms each).
+13. WiFi `try_connect`: pre-scan + BSSID/channel pin + `connect()`.
+14. **Connecting screen**: spinner + SSID + footer; LED solid ORANGE.
+15. On association: inline DHCP via smoltcp (~2-5 s); LED blink BLUE.
+16. **Operational screen**: IP:port headline + (future) producer list;
+    LED solid BLUE — or fast-blink RED while `lora_available` is false.
 
-Poll loop (1 Hz):
+Main poll loop (1 Hz, except `fast_poll_until_associated` which polls at
+100 ms during initial WiFi up):
 
 - Read MAX17048 (`voltage_mv` + `soc_percent`).
-- Every 15 s: blocking WiFi scan, populate top 8 APs by RSSI.
-- Render the **provisioning** screen (header chrome + "Configuration
-  Required" prompt + top 3 APs with `ch{N}/{security}` and signal bars +
-  bottom "Connect USB & Configure" hint).
-- Drive the WS2812 to the SOC-mapped color (red 0 % → yellow 50 % → green
-  100 %, dim blue when SOC unknown).
+- USB-provisioning poll (re-uploadable while in `Connecting`/`Online`).
+- Render the current screen (Provisioning / Connecting / Operational).
+- Drive the RGB based on `(network_phase, config_loaded, lora_available)`
+  via [`LedDriver`](../../crates/muninn-gate-platform-esp32/src/bifrost_pros3/status_led.rs).
 - Heartbeat status line on USB Serial/JTAG every 5 ticks.
-
-LoRa stays disabled (no `MeshRadio`, no `MeshcoreClient`, no
-`PollScheduler` constructed).
 
 ## Open Questions
 
 - Exact ProS3 vs ProS3[D] SKU and schematic revision.
-- WiFi credential source for first hardware test (config storage path for
-  the Bifrost variant is still TBD; right now the title is hard-coded
-  `[???]` until USB provisioning lands).
-- Whether ProS3[D] antenna switch should remain `ExternalUfl` (current) or
-  be surfaced as a UI/config toggle.
-- Partition table reuse — the current `partitions.csv` works because both
-  boards are ESP32-S3-WROOM-1 N16R8.
+- Whether ProS3[D] antenna switch should remain `Onboard3D` (current,
+  needed for WiFi reliability) or be surfaced as a UI/config toggle.
 - Final SSD1351 + SPI bring-up once the EYESPI cable arrives (the
   `Oled128x96Color` variant remains in core for that path).
-- E22P module supply path — buck vs decoupled rail vs direct (see "Power
-  notes" above).
-- Safe TX power table for E22P before radio enablement.
+- Whether to share SPI2 with another peripheral later (a microSD card,
+  for example) — would need to multiplex `NSS` and arbitrate around the
+  SX1262's `BUSY` window.
+- Safe TX power ceiling for the Wio-SX1262 on the bare 3V3 rail before
+  voltage sag becomes visible on `VCC` under sustained TX.

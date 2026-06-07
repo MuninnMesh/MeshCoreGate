@@ -3,6 +3,7 @@
 use core::fmt;
 
 use heapless::{String, Vec};
+use muninn_gate_time::TimeSettings;
 
 use crate::Error;
 
@@ -279,6 +280,8 @@ pub enum DisplayTelemetryValue
     BatteryVoltage,
     /// Show pressure converted to hPa.
     PressureHpa,
+    /// Show luminosity in lux.
+    LuminosityLux,
     /// Show last received RSSI.
     Rssi,
     /// Show latest gateway poll latency.
@@ -296,6 +299,7 @@ impl DisplayTelemetryValue
             Self::StateOfCharge => "soc",
             Self::BatteryVoltage => "battery_voltage",
             Self::PressureHpa => "pressure",
+            Self::LuminosityLux => "luminosity",
             Self::Rssi => "rssi",
             Self::PollLatency => "latency",
         }
@@ -506,6 +510,8 @@ pub struct GatewayConfig<const N: usize = MAX_TELEMETRY_PRODUCERS>
     pub radio:     RadioParams,
     /// MeshCore gateway identity and routing settings.
     pub meshcore:  MeshcoreConfig,
+    /// Wall-clock display and RTC/provisioning settings.
+    pub time:      TimeSettings,
 }
 
 impl<const N: usize> GatewayConfig<N>
@@ -521,6 +527,7 @@ impl<const N: usize> GatewayConfig<N>
             polling:   PollingConfig::default(),
             radio:     RadioParams::default(),
             meshcore:  MeshcoreConfig::default(),
+            time:      TimeSettings::default(),
         })
     }
 
@@ -552,6 +559,7 @@ impl<const N: usize> GatewayConfig<N>
             || !self.display.is_valid()
             || !self.radio.is_supported()
             || !self.meshcore.routing.is_valid()
+            || !self.time.is_valid()
         {
             return Err(Error::InvalidConfig);
         }
@@ -615,6 +623,7 @@ impl<const N: usize> Default for GatewayConfig<N>
             polling:   PollingConfig::default(),
             radio:     RadioParams::default(),
             meshcore:  MeshcoreConfig::default(),
+            time:      TimeSettings::default(),
         }
     }
 }
@@ -728,6 +737,15 @@ mod tests
     {
         let mut config = supported_config();
         config.polling.retry_count = super::MAX_RETRY_COUNT + 1;
+
+        assert_eq!(config.validate(), Err(crate::Error::InvalidConfig));
+    }
+
+    #[test]
+    fn rejects_invalid_time_offset()
+    {
+        let mut config = supported_config();
+        config.time.utc_offset_minutes = 15 * 60;
 
         assert_eq!(config.validate(), Err(crate::Error::InvalidConfig));
     }

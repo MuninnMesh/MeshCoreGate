@@ -55,7 +55,11 @@ pub const RADIO_AIRTIME_BUDGET_FACTOR: u32 = 2;
 /// Number of queued MeshCore TX frames retained for the radio owner.
 pub const RADIO_TX_QUEUE_LEN: usize = 8;
 /// Number of received LoRa frames retained for the MeshCore adapter.
-pub const RADIO_RX_QUEUE_LEN: usize = 8;
+///
+/// Background MeshCore traffic can arrive in bursts. Keep enough depth that a
+/// burst does not starve the active poller, and prefer newest frames when the
+/// queue still overflows.
+pub const RADIO_RX_QUEUE_LEN: usize = 32;
 /// MeshCore route bits in the first payload byte.
 pub const MESHCORE_ROUTE_MASK: u8 = 0x03;
 /// MeshCore zero-hop direct route bits.
@@ -204,6 +208,7 @@ where
         iq_inverted:   radio.iq_inverted,
         tx_ramp_time:  ramp_time(radio.tx_ramp_time_us)?,
         use_tcxo:      V::RADIO_HARDWARE.tcxo_enabled,
+        tcxo_voltage:  V::RADIO_HARDWARE.tcxo_voltage,
         tcxo_delayms:  V::RADIO_HARDWARE.tcxo_delay_ms,
     })
 }
@@ -700,18 +705,41 @@ fn record_radio_event(level: DiagnosticLevel, code: &str, message: &str)
     );
 }
 
-fn dequeue_tx_frame() -> Option<MeshTxFrame>
+/// Pop the next TX frame queued for radio service. Used by board-local
+/// cooperative radio loops (Heltec via [`CooperativeRadioOwner::service`],
+/// Bifrost via its own owner).
+pub fn dequeue_tx_frame() -> Option<MeshTxFrame>
 {
     critical_section::with(|cs| RADIO_TX_QUEUE.borrow_ref_mut(cs).pop_front())
 }
 
-fn enqueue_rx_frame(frame: MeshRxFrame) -> Result<(), RadioQueueError>
+/// Return a TX frame to the front of the queue after a transient radio-owner
+/// failure. This is intentionally front-biased: active MeshCore polls are
+/// already waiting for this exact request frame, so preserving ordering gives
+/// the current request its best chance before the response window expires.
+pub fn requeue_tx_frame_front(frame: MeshTxFrame) -> Result<(), RadioQueueError>
 {
     critical_section::with(|cs| {
-        RADIO_RX_QUEUE
+        RADIO_TX_QUEUE
             .borrow_ref_mut(cs)
-            .push_back(frame)
+            .push_front(frame)
             .map_err(|_| RadioQueueError::Full)
+    })
+}
+
+/// Push a freshly received RX frame for the MeshCore adapter to pick up.
+/// Used by board-local cooperative radio loops; the meshcore client drains
+/// via [`try_dequeue_rx_frame`].
+pub fn enqueue_rx_frame(frame: MeshRxFrame) -> Result<(), RadioQueueError>
+{
+    critical_section::with(|cs| {
+        let mut queue = RADIO_RX_QUEUE.borrow_ref_mut(cs);
+        if queue.push_back(frame).is_ok() {
+            return Ok(());
+        }
+
+        let _ = queue.pop_front();
+        queue.push_back(frame).map_err(|_| RadioQueueError::Full)
     })
 }
 

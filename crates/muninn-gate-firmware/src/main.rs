@@ -7,9 +7,7 @@
 compile_error!("select exactly one Muninn Gate board feature");
 
 #[cfg(not(any(feature = "heltec-v4", feature = "bifrost-pros3")))]
-compile_error!(
-    "select a Muninn Gate board feature, for example `heltec-v4` or `bifrost-pros3`"
-);
+compile_error!("select a Muninn Gate board feature, for example `heltec-v4` or `bifrost-pros3`");
 
 #[cfg(any(feature = "heltec-v4", feature = "bifrost-pros3"))]
 use esp_backtrace as _;

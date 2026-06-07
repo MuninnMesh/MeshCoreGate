@@ -5,7 +5,7 @@
 pub mod tx_power;
 
 use muninn_gate_core::{DisplayVariant, GateFirmwareVariant, GatewayCapabilities, TxPowerMapping};
-use muninn_gate_platform_esp32::{Esp32BoardVariant, Esp32RadioHardware};
+use muninn_gate_platform_esp32::{Esp32BoardVariant, Esp32RadioHardware, TcxoVoltage};
 use muninn_gate_ui::DisplaySize;
 
 /// WiFi LoRa 32 V4.x, ESP32S3 + SX1262 LoRa Node firmware variant.
@@ -53,6 +53,7 @@ impl Esp32BoardVariant for WifiLora32V4x
 {
     const RADIO_HARDWARE: Esp32RadioHardware = Esp32RadioHardware {
         tcxo_enabled:  true,
+        tcxo_voltage:  TcxoVoltage::Volt1_8,
         tcxo_delay_ms: 20,
     };
 }

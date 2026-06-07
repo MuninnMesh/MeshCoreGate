@@ -8,8 +8,6 @@
 
 extern crate alloc;
 
-/// Bifrost Gate ProS3 bring-up runner (Milestone 1 / Phase A1).
-pub mod bifrost_pros3;
 /// ESP32 runtime USB configuration updates.
 pub mod config_update;
 /// ESP32 diagnostic event retention.
@@ -18,6 +16,9 @@ pub mod diagnostics;
 pub mod display;
 /// ESP32 HTTP response helpers and Prometheus rendering bridge.
 pub mod http_metrics;
+/// Chip-level HTTP server (smoltcp socket pool, request handling)
+/// shared by every ESP32 board variant.
+pub mod http_server;
 /// ESP32 local input controls.
 pub mod input;
 /// ESP32 MeshCore adapter over the radio owner queues.
@@ -26,6 +27,8 @@ pub mod meshcore;
 pub mod platform;
 /// ESP32 poll-on-demand request accounting.
 pub mod poll_control;
+/// Board-agnostic power-monitoring trait (SOC + USB presence).
+pub mod power;
 /// ESP32 USB provisioning parser.
 pub mod provisioning;
 /// ESP32 radio configuration and cooperative owner hooks.
@@ -40,6 +43,8 @@ pub mod storage;
 pub mod telemetry_state;
 /// ESP32 WiFi station and blocking HTTP service.
 pub mod wifi;
+/// Chip-level WiFi primitives shared by every ESP32 board variant.
+pub mod wifi_common;
 
 use esp_hal::delay::Delay;
 use muninn_gate_core::config::MAX_TELEMETRY_PRODUCERS;
@@ -57,8 +62,8 @@ use muninn_gate_core::{
     TxPowerMapping,
 };
 use muninn_mesh_radio::MeshRadioConfig;
+pub use muninn_mesh_sx126x::op::tcxo::TcxoVoltage;
 
-pub use crate::bifrost_pros3::run_bifrost_pros3;
 use crate::config_update::UsbConfigUpdateService;
 use crate::display::LocalDisplay;
 use crate::platform::Esp32RadioResources;
@@ -70,6 +75,8 @@ pub struct Esp32RadioHardware
 {
     /// Whether the radio path uses a TCXO controlled by the radio driver.
     pub tcxo_enabled:  bool,
+    /// DIO3 voltage used to power/control the TCXO.
+    pub tcxo_voltage:  TcxoVoltage,
     /// TCXO startup delay in milliseconds when [`Self::tcxo_enabled`] is true.
     pub tcxo_delay_ms: u32,
 }
