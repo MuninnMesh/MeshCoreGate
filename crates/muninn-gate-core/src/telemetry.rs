@@ -1128,7 +1128,14 @@ impl<const N: usize> TelemetryStore<N> for FixedTelemetryStore<N>
     ) -> Result<(), Error>
     {
         let record = self.record_mut(producer_id)?;
-        record.telemetry = Some(telemetry);
+        match record.telemetry.as_mut() {
+            // Overlay populated values onto the last-known telemetry so sticky
+            // fields (status, rssi, snr, uptime) set by the slower 5-minute
+            // GET_STATUS poll survive the more frequent telemetry polls that
+            // leave them `None`.
+            Some(existing) => existing.merge_from(telemetry),
+            None => record.telemetry = Some(telemetry),
+        }
         Ok(())
     }
 
